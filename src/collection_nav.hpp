@@ -18,6 +18,16 @@ HookAction on_cursor_move_pre(ModContext*, void* args, void*, void*);
 DEFINE_HOOK(&dMenu_Collect2D_c::pointerWait, PointerWaitHook);
 HookAction on_pointer_wait_pre(ModContext*, void* args, void*, void*);
 void on_pointer_wait_post(ModContext*, void* args, void*, void*);
+void on_pointer_wait_replace(ModContext*, void* args, void* retval, void*);
+
+// Resolved once at init (collection_lib.cpp) via HookService::resolve() - see
+// collection_nav.cpp for why this can't be a normal linked call.
+extern bool (*g_hitPaneFn)(CPaneMgr*, f32);
+extern const char* const kHitPaneMangledName;
+extern void (*g_setHoverTargetFn)(u16);
+extern const char* const kSetHoverTargetMangledName;
+extern bool (*g_peekClickFn)();
+extern const char* const kPeekClickMangledName;
 
 DEFINE_HOOK(&dMenu_Collect2D_c::setItemNameString, SetItemNameStringHook);
 HookAction on_set_item_name_string_pre(ModContext*, void* args, void*, void*);

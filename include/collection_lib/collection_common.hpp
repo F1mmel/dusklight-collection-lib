@@ -59,9 +59,6 @@ struct CollectionVanillaSlotDef {
 };
 
 int collectionlib_add_vanilla_slot(u8 row, const CollectionVanillaSlotDef& def);
-int collectionlib_add_vanilla_sword_slot(const CollectionVanillaSlotDef& def);
-int collectionlib_add_vanilla_shield_slot(const CollectionVanillaSlotDef& def);
-int collectionlib_add_vanilla_tunic_slot(const CollectionVanillaSlotDef& def);
 
 // Is the column claimed by a VANILLA-WIRED slot? Gates the vanilla cell's
 // unlock - a custom slot filling the column must NOT unlock the vanilla item.

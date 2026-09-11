@@ -756,18 +756,35 @@ void custom_equip_reset_registry() {
     s_count = 0;
 }
 
+#include "collection_lib/collection_common.hpp"
+
 int custom_equip_register(const CustomEquipDef& def) {
+    CustomEquipDef resolved = def;
+    if (resolved.item == 0) {
+        u8 row = (resolved.kind == CE_SWORD) ? 1 : (resolved.kind == CE_SHIELD) ? 2 : 3;
+        const u8 first = (row == 3) ? 5 : 4;
+        u8 found = 0;
+        for (u8 col = first; col <= 12; ++col) {
+            if (!cl_item_exists(row, col)) {
+                found = col;
+                break;
+            }
+        }
+        if (found == 0) return -1;
+        resolved.item = found;
+    }
+
     for (int i = 0; i < s_count; i++) {
-        if (s_entries[i].def.kind == def.kind && s_entries[i].def.item == def.item) {
-            if (s_entries[i].def.modelFileId != def.modelFileId ||
-                s_entries[i].def.sheathFileId != def.sheathFileId ||
-                (s_entries[i].def.modelArc != nullptr && std::strcmp(s_entries[i].def.modelArc, def.modelArc) != 0)) {
+        if (s_entries[i].def.kind == resolved.kind && s_entries[i].def.item == resolved.item) {
+            if (s_entries[i].def.modelFileId != resolved.modelFileId ||
+                s_entries[i].def.sheathFileId != resolved.sheathFileId ||
+                (s_entries[i].def.modelArc != nullptr && std::strcmp(s_entries[i].def.modelArc, resolved.modelArc) != 0)) {
                 s_entries[i].model = nullptr;
                 s_entries[i].sheathModel = nullptr;
                 s_entries[i].tried = false;
                 s_entries[i].tryCount = 0;
             }
-            s_entries[i].def = def;   // refresh
+            s_entries[i].def = resolved;   // refresh
             return i;
         }
     }
@@ -782,11 +799,11 @@ int custom_equip_register(const CustomEquipDef& def) {
     J3DModel* fm = s_entries[id].faceModel;
     J3DModel* hd = s_entries[id].handModel;
     bool tr = s_entries[id].tried;
-    if (s_entries[id].def.modelFileId != def.modelFileId ||
-        s_entries[id].def.sheathFileId != def.sheathFileId ||
-        s_entries[id].def.kind != def.kind ||
-        s_entries[id].def.item != def.item ||
-        (s_entries[id].def.modelArc != nullptr && std::strcmp(s_entries[id].def.modelArc, def.modelArc) != 0)) {
+    if (s_entries[id].def.modelFileId != resolved.modelFileId ||
+        s_entries[id].def.sheathFileId != resolved.sheathFileId ||
+        s_entries[id].def.kind != resolved.kind ||
+        s_entries[id].def.item != resolved.item ||
+        (s_entries[id].def.modelArc != nullptr && std::strcmp(s_entries[id].def.modelArc, resolved.modelArc) != 0)) {
         md = nullptr;
         sm = nullptr;
         hm = nullptr;
@@ -795,7 +812,7 @@ int custom_equip_register(const CustomEquipDef& def) {
         tr = false;
     }
     s_entries[id] = Entry{};
-    s_entries[id].def = def;
+    s_entries[id].def = resolved;
     s_entries[id].iconBuf = ib; s_entries[id].iconTex = it;
     s_entries[id].arcBuf = ab;  s_entries[id].arc = ar;
     s_entries[id].model = md;
@@ -860,6 +877,14 @@ void custom_equip_activate(int id) {
             pl->setItemMatrix(0);
         }
     }
+
+    if (kind == CE_SWORD) {
+        dMeter2_c* meter = g_meter2_info.getMeterClass();
+        dMeter2Draw_c* draw = (meter != nullptr) ? meter->getMeterDrawPtr() : nullptr;
+        if (draw != nullptr) {
+            draw->changeTextureItemB(dComIfGs_getSelectEquipSword());
+        }
+    }
 }
 
 void custom_equip_clear(CustomEquipKind kind) {
@@ -873,6 +898,14 @@ void custom_equip_clear(CustomEquipKind kind) {
         } else if (kind == CE_SHIELD) {
             pl->setShieldModel();
             pl->setItemMatrix(0);
+        }
+    }
+
+    if (kind == CE_SWORD) {
+        dMeter2_c* meter = g_meter2_info.getMeterClass();
+        dMeter2Draw_c* draw = (meter != nullptr) ? meter->getMeterDrawPtr() : nullptr;
+        if (draw != nullptr) {
+            draw->changeTextureItemB(dComIfGs_getSelectEquipSword());
         }
     }
 }

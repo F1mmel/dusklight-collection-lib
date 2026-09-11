@@ -70,9 +70,6 @@ static int cl_add_vanilla_slot(u8 row, const CollectionVanillaSlotDef& def) {
 }
 
 int collectionlib_add_vanilla_slot(u8 row, const CollectionVanillaSlotDef& def) { return cl_add_vanilla_slot(row, def); }
-int collectionlib_add_vanilla_sword_slot(const CollectionVanillaSlotDef& def) { return cl_add_vanilla_slot(1, def); }
-int collectionlib_add_vanilla_shield_slot(const CollectionVanillaSlotDef& def) { return cl_add_vanilla_slot(2, def); }
-int collectionlib_add_vanilla_tunic_slot(const CollectionVanillaSlotDef& def) { return cl_add_vanilla_slot(3, def); }
 
 int cl_vanilla_slot_count() { return s_vanillaSlotCount; }
 const CollectionVanillaSlotDef* cl_vanilla_slot_get(int i) { return &s_vanillaSlots[i].def; }
@@ -319,19 +316,21 @@ static void ensure_system_heap_capacity() {
 
 DEFINE_HOOK(&dMeter2Draw_c::changeTextureItemB, CollectionLibItemBTextureHook);
 
-static void cl_item_b_texture_post(ModContext*, void*, void*, void*) {
+static void cl_item_b_texture_post(ModContext*, void* args, void*, void*) {
     if (!custom_equip_active(CE_SWORD)) return;
     const int id = custom_equip_active_id(CE_SWORD);
     if (id < 0) return;
     ResTIMG* icon = custom_equip_icon(id);
     if (icon == nullptr) return;
 
-    dMeter2_c* meter = g_meter2_info.getMeterClass();
-    dMeter2Draw_c* draw = (meter != nullptr) ? meter->getMeterDrawPtr() : nullptr;
-    if (draw == nullptr || draw->getMainScreenPtr() == nullptr) return;
-    J2DPane* itemB = draw->getMainScreenPtr()->search(MULTI_CHAR('item_b'));
-    if (itemB != nullptr) {
-        static_cast<J2DPicture*>(itemB)->changeTexture(icon, 0);
+    dMeter2Draw_c* draw = args ? mods::arg<dMeter2Draw_c*>(args, 0) : nullptr;
+    if (draw == nullptr) return;
+
+    if (draw->mpItemB != nullptr && draw->mpItemB->getPanePtr() != nullptr) {
+        static_cast<J2DPicture*>(draw->mpItemB->getPanePtr())->changeTexture(icon, 0);
+    }
+    if (draw->mpItemBPane != nullptr) {
+        draw->mpItemBPane->hide();
     }
 }
 
@@ -371,10 +370,50 @@ ModResult collectionlib_init(const HookService* hook_svc, const LogService* log_
         mods::hook::add_post<MwExecuteHook>(hook_svc, on_mw_execute_post);
 
         // Menu navigation & item description strings
-        mods::hook::add_pre<GetItemTagHook>(hook_svc, on_get_item_tag_pre);
+        // getItemTag() installs with MOD_ERROR on this build (too small a
+        // function for the detour mechanism) - on_get_item_tag_pre's callback
+        // below silently never runs as a result. Logged once at startup so a
+        // future engine/SDK update that changes this doesn't go unnoticed.
+        ModResult r_getItemTag = mods::hook::add_pre<GetItemTagHook>(hook_svc, on_get_item_tag_pre);
+        ModResult r_pointerWait = mods::hook::add_pre<PointerWaitHook>(hook_svc, on_pointer_wait_pre);
+        log_collect_info("[CollectionLib] hook install: GetItemTagHook=%d PointerWaitHook=%d", (int)r_getItemTag, (int)r_pointerWait);
+
+        // Resolve dusk::menu_pointer's hit_pane/set_hover_target/peek_click
+        // addresses directly (symbol lookup only, no detour/patch attempt) so
+        // the pointerWait replacement below can call them as plain function
+        // pointers - see collection_nav.cpp for why these can't be normal
+        // linked C++ calls. Logged once at startup for the same reason as above.
+        if (hook_svc->resolve) {
+            void* hitPaneAddr = nullptr;
+            ModResult r_resolve = hook_svc->resolve(mod_ctx, kHitPaneMangledName, &hitPaneAddr, nullptr);
+            log_collect_info("[CollectionLib] resolve hit_pane: result=%d addr=%p", (int)r_resolve, hitPaneAddr);
+            if (r_resolve == MOD_OK && hitPaneAddr) {
+                g_hitPaneFn = reinterpret_cast<bool (*)(CPaneMgr*, f32)>(hitPaneAddr);
+            }
+
+            void* setHoverTargetAddr = nullptr;
+            ModResult r_resolve3 = hook_svc->resolve(mod_ctx, kSetHoverTargetMangledName, &setHoverTargetAddr, nullptr);
+            log_collect_info("[CollectionLib] resolve set_hover_target: result=%d addr=%p", (int)r_resolve3, setHoverTargetAddr);
+            if (r_resolve3 == MOD_OK && setHoverTargetAddr) {
+                g_setHoverTargetFn = reinterpret_cast<void (*)(u16)>(setHoverTargetAddr);
+            }
+
+            void* peekClickAddr = nullptr;
+            ModResult r_resolve4 = hook_svc->resolve(mod_ctx, kPeekClickMangledName, &peekClickAddr, nullptr);
+            log_collect_info("[CollectionLib] resolve peek_click: result=%d addr=%p", (int)r_resolve4, peekClickAddr);
+            if (r_resolve4 == MOD_OK && peekClickAddr) {
+                g_peekClickFn = reinterpret_cast<bool (*)()>(peekClickAddr);
+            }
+        }
         mods::hook::add_pre<CursorPosSetHook>(hook_svc, on_cursor_pos_set_pre);
         mods::hook::add_pre<CursorMoveHook>(hook_svc, on_cursor_move_pre);
-        mods::hook::add_pre<PointerWaitHook>(hook_svc, on_pointer_wait_pre);
+        // getItemTag() can't be hooked on this build (MOD_ERROR above) - vanilla
+        // pointerWait() therefore never finds Hylian Shield/Reinforced Shield/
+        // Magic Armor. Replace the whole function: run the real original first
+        // (unchanged for every other cell), fall back to our own hit_pane() check
+        // against those 3 known-good panes only if it found nothing.
+        ModResult r_pointerWaitReplace = mods::hook::replace<PointerWaitHook>(hook_svc, on_pointer_wait_replace);
+        log_collect_info("[CollectionLib] hook install: PointerWaitReplace=%d", (int)r_pointerWaitReplace);
         mods::hook::add_post<PointerWaitHook>(hook_svc, on_pointer_wait_post);
         mods::hook::add_pre<SetItemNameStringHook>(hook_svc, on_set_item_name_string_pre);
         mods::hook::add_pre<GetStringKanjiHook>(hook_svc, on_get_string_kanji_pre);

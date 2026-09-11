@@ -58,7 +58,12 @@ SlotCell grid_cell(u8 row, u8 item) {
     if (row >= 1 && row <= 3 && item == 6) {
         return SlotCell{ 1, static_cast<u8>(row - 1) };
     }
-    return SlotCell{ 0, static_cast<u8>(row - 1) };
+    // Item 7: the last free hidden column (x=0). Beyond this, the row is full -
+    // return "no cell" rather than silently colliding every further item onto x=0.
+    if (row >= 1 && row <= 3 && item == 7) {
+        return SlotCell{ 0, static_cast<u8>(row - 1) };
+    }
+    return SlotCell{};
 }
 
 int slot_count() { return s_slotRegistryCount; }

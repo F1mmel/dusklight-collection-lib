@@ -48,6 +48,10 @@ MOD_EXPORT ModResult mod_initialize(ModError*) {
         return MOD_ERROR;
     }
 
+    // Policy callbacks (the library holds no settings of its own - the mod
+    // decides; here: everything on).
+    collectionlib_set_keep_ordon_shield_policy([]() { return true; });
+    collectionlib_set_unequip_policy([]() { return true; });
 
     collectionlib_set_register_callback(&register_slots);
     return collectionlib_init(svc_hook, svc_log, svc_save, mod_ctx);
