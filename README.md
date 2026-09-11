@@ -196,7 +196,6 @@ register a custom equip slot at an explicit column.
 | --- | --- |
 | `collectionlib_set_unequip_policy(bool (*)())` | Injected policy: "Unequip" action offered? |
 | `collectionlib_set_keep_ordon_shield_policy(bool (*)())` | Injected policy: ordon shield never leaves the collection? |
-| `collectionlib_set_starter_slots_policy(bool (*)())` | Injected policy: starter gear slots + row layout? |
 | `collectionlib_set_register_callback(void (*)())` | Provide the function that registers all of the mod's slots |
 | `collectionlib_register_slot(const CustomEquipDef&)` | Add a custom slot; returns the slot id (call from the callback) |
 | `collectionlib_add_sword_slot / add_shield_slot / add_tunic_slot` | Register a slot at an explicit column |
