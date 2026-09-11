@@ -87,9 +87,8 @@ MOD_EXPORT ModResult mod_initialize(ModError*) {
         return MOD_ERROR;
     }
 
-    // Policy callbacks - the library holds no settings of its own; your mod
-    // owns its config and injects the decisions as plain predicates.
-    collectionlib_set_starter_slots_policy([]() { return true; });       // starter gear slots
+    // Optional feature policies (the library holds no settings of its own;
+    // your mod owns its config and injects the decisions as predicates).
     collectionlib_set_keep_ordon_shield_policy([]() { return true; });   // ordon shield stays
     collectionlib_set_unequip_policy([]() { return true; });             // "Unequip" action
 
