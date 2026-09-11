@@ -7,6 +7,7 @@
 // exact structure so the proven code compiles unmodified.
 
 #include <collection_lib/collection_lib.hpp>
+#include "d/d_meter2.h"
 
 // Implementation units, in the original dependency order.
 #include "collection_common.cpp"
@@ -308,8 +309,29 @@ static void ensure_system_heap_capacity() {
 }
 
 // ---------------------------------------------------------------------------
-// Lifecycle
+// HUD B-button icon: while a custom sword is equipped, the game keeps showing
+// the backing vanilla sword's icon (drawButtonB derives it from
+// dComIfGs_getSelectEquipSword). Override the texture right after the game
+// refreshes it.
 // ---------------------------------------------------------------------------
+
+DEFINE_HOOK(&dMeter2Draw_c::changeTextureItemB, CollectionLibItemBTextureHook);
+
+static void cl_item_b_texture_post(ModContext*, void*, void*, void*) {
+    if (!custom_equip_active(CE_SWORD)) return;
+    const int id = custom_equip_active_id(CE_SWORD);
+    if (id < 0) return;
+    ResTIMG* icon = custom_equip_icon(id);
+    if (icon == nullptr) return;
+
+    dMeter2_c* meter = g_meter2_info.getMeterClass();
+    dMeter2Draw_c* draw = (meter != nullptr) ? meter->getMeterDrawPtr() : nullptr;
+    if (draw == nullptr || draw->getMainScreenPtr() == nullptr) return;
+    J2DPane* itemB = draw->getMainScreenPtr()->search(MULTI_CHAR('item_b'));
+    if (itemB != nullptr) {
+        static_cast<J2DPicture*>(itemB)->changeTexture(icon, 0);
+    }
+}
 
 ModResult collectionlib_init(const HookService* hook_svc, const LogService* log_svc,
                              const SaveService* save_svc, ModContext* mod_ctx, ModError*) {
@@ -324,10 +346,7 @@ ModResult collectionlib_init(const HookService* hook_svc, const LogService* log_
     collectionlib_run_slot_registration();
     custom_equip_restore_from_save();
 
-    log_collect_info("[CollectionLib] init: keepOrdonShield=%d, unequip=%d, vanillaSlots=%d",
-                     cl_keep_ordon_shield_enabled() ? 1 : 0,
-                     cl_unequip_enabled() ? 1 : 0,
-                     s_vanillaSlotCount);
+    log_collect_info("[CollectionLib] init: vanillaSlots=%d", s_vanillaSlotCount);
 
     if (hook_svc != nullptr) {
         // Area transition & spawn preservation
@@ -372,6 +391,9 @@ ModResult collectionlib_init(const HookService* hook_svc, const LogService* log_
 
         // Custom sword/shield/tunic model swap on Link (world + doll).
         custom_equip_init_hooks(hook_svc, g_saveSvc);
+
+        // HUD B-button icon override for equipped custom swords.
+        mods::hook::add_post<CollectionLibItemBTextureHook>(hook_svc, cl_item_b_texture_post);
     }
     return MOD_OK;
 }

@@ -70,7 +70,7 @@ void on_wait_proc_post(ModContext*, void* args, void*, void*) {
             if (collect2D->mIsWolf) {
                 collect2D->setAButtonString(0);
             } else if (is_collect_item_equipped(curX, curY)) {
-                collect2D->setAButtonString((cl_unequip_enabled() && curY != 2) ? 0x437 : 0);  // "Unequip"
+                collect2D->setAButtonString((true && curY != 2) ? 0x437 : 0);  // "Unequip"
             } else {
                 collect2D->setAButtonString(0x436);  // "Equip"
             }
@@ -82,7 +82,7 @@ void on_wait_proc_post(ModContext*, void* args, void*, void*) {
         if (collect2D->mIsWolf || !is_collect_item_unlocked(curX, curY)) {
             collect2D->setAButtonString(0);
         } else if (is_collect_item_equipped(curX, curY)) {
-            if (cl_unequip_enabled() && (curY == 0 || curY == 1)) {
+            if (true && (curY == 0 || curY == 1)) {
                 collect2D->setAButtonString(0x437); // "Unequip"
             } else {
                 collect2D->setAButtonString(0);
@@ -145,7 +145,7 @@ HookAction on_change_sword_pre(ModContext*, void* args, void*, void*) {
     if (curX == 3) {
         if (is_collect_item_unlocked(3, 0)) {
             if (!wasCustomSword && dComIfGs_getSelectEquipSword() == dItemNo_WOOD_STICK_e) {
-                if (cl_unequip_enabled()) {
+                if (true) {
                     dMeter2Info_setSword(dItemNo_NONE_e, false);
                     Z2GetAudioMgr()->seStart(Z2SE_SY_ITEM_COMBINE_OFF, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
                     dMeter2Info_set2DVibration();
@@ -162,7 +162,7 @@ HookAction on_change_sword_pre(ModContext*, void* args, void*, void*) {
     } else if (curX == 4) {
         if (is_collect_item_unlocked(4, 0)) {
             if (!wasCustomSword && dComIfGs_getSelectEquipSword() == dItemNo_SWORD_e) {
-                if (cl_unequip_enabled()) {
+                if (true) {
                     dMeter2Info_setSword(dItemNo_NONE_e, false);
                     Z2GetAudioMgr()->seStart(Z2SE_SY_ITEM_COMBINE_OFF, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
                     dMeter2Info_set2DVibration();
@@ -180,7 +180,7 @@ HookAction on_change_sword_pre(ModContext*, void* args, void*, void*) {
             u8 targetSword = dComIfGs_isItemFirstBit(dItemNo_LIGHT_SWORD_e) ? dItemNo_LIGHT_SWORD_e : dItemNo_MASTER_SWORD_e;
             bool isMasterEquipped = (dComIfGs_getSelectEquipSword() == targetSword || dComIfGs_getSelectEquipSword() == dItemNo_MASTER_SWORD_e || dComIfGs_getSelectEquipSword() == dItemNo_LIGHT_SWORD_e);
             if (!wasCustomSword && isMasterEquipped) {
-                if (cl_unequip_enabled()) {
+                if (true) {
                     dMeter2Info_setSword(dItemNo_NONE_e, false);
                     Z2GetAudioMgr()->seStart(Z2SE_SY_ITEM_COMBINE_OFF, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
                     dMeter2Info_set2DVibration();
@@ -221,7 +221,7 @@ HookAction on_change_shield_pre(ModContext*, void* args, void*, void*) {
     for (const auto& vs : kVanillaShields) {
         if (vs.x == curX && is_collect_item_unlocked(vs.x, 1)) {
             if (!wasCustomShield && dComIfGs_getSelectEquipShield() == vs.itemNo) {
-                if (cl_unequip_enabled()) {
+                if (true) {
                     dMeter2Info_setShield(dItemNo_NONE_e, false);
                     daAlink_getAlinkActorClass()->setShieldChange();
                     Z2GetAudioMgr()->seStart(Z2SE_SY_ITEM_COMBINE_OFF, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
@@ -244,7 +244,7 @@ HookAction on_change_shield_pre(ModContext*, void* args, void*, void*) {
 }
 
 HookAction on_meter2_info_set_shield_pre(ModContext*, void* args, void*, void*) {
-    if (!cl_keep_ordon_shield_enabled() || !args) return HOOK_CONTINUE;
+    if (!true || !args) return HOOK_CONTINUE;
     u8 itemId = mods::arg<u8>(args, 0);
     bool offItemBit = mods::arg<bool>(args, 1);
     // The wood/Ordon shield only ever burns while it is the equipped shield, so
@@ -266,7 +266,7 @@ HookAction on_meter2_info_set_shield_pre(ModContext*, void* args, void*, void*) 
 // the Ordon Shield but is missing the shop's Wooden Shield - the exact case the
 // option is meant to allow.
 HookAction on_msg_flow_get_check_pre(ModContext*, void* args, void* retval, void*) {
-    if (!cl_keep_ordon_shield_enabled() || !args) return HOOK_CONTINUE;
+    if (!true || !args) return HOOK_CONTINUE;
     mesg_flow_node_branch* node = mods::arg<mesg_flow_node_branch*>(args, 1);
     if (!node) return HOOK_CONTINUE;
     u8 prm0 = static_cast<u8>(node->param);
@@ -284,7 +284,7 @@ HookAction on_msg_flow_get_check_pre(ModContext*, void* args, void* retval, void
 // hand it back. Safe to call every frame - it only re-grants the owned bit when
 // the permanent "once collected" record says the player earned it.
 void keep_ordon_shield_tick() {
-    if (!cl_keep_ordon_shield_enabled()) return;
+    if (!true) return;
     if (daPy_getLinkPlayerActorClass() == nullptr) return;      // not in-game yet
     if (!dComIfGs_isCollectShield(0)) return;                   // never had it
     if (dComIfGs_isItemFirstBit(dItemNo_WOOD_SHIELD_e)) return; // still owned

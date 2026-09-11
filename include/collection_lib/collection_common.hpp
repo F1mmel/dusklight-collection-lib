@@ -31,16 +31,10 @@
 #include "mods/svc/hook.hpp"
 #include "mods/svc/resource.h"
 
-// --- consumer policy hooks ----------------------------------------------------
-// The library holds no settings and no feature switches: everything that is a
-// CONSUMER DECISION is injected as a plain predicate. The library calls these
-// while building/serving the menu; the consuming mod owns the actual config.
-// nullptr (the default) means "feature off".
-//
-//   unequip policy           - true = the "Unequip" action is offered on equip slots
-//   keep-ordon-shield policy - true = the ordon shield never leaves the collection once owned
-void collectionlib_set_unequip_policy(bool (*fn)());
-void collectionlib_set_keep_ordon_shield_policy(bool (*fn)());
+// --- library features -----------------------------------------------------------
+// The "Unequip" action and the keep-ordon-shield behavior are lib features and
+// always available. The consumer decides WHICH slots exist and WHERE via
+// collectionlib_add_*_slot / collectionlib_move_slot.
 
 // --- vanilla-wired slots -------------------------------------------------------
 // The first column of each row hosts a VANILLA item cell (wooden sword, ordon

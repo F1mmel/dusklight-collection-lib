@@ -920,7 +920,7 @@ void custom_equip_on_equip(dMenu_Collect2D_c* collect2D) {
         if (kind == CE_TUNIC) return;
 
         // Already equipped -> unequip
-        if (!cl_unequip_enabled()) return;
+        // Unequip is a lib feature (always available; no consumer policy).
         s_equipDebounce = 8;
         custom_equip_clear(kind);
         if (kind == CE_SHIELD) {
