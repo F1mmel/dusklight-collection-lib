@@ -164,6 +164,20 @@ static void add_custom_equip_slots(J2DScreen* screen) {
     custom_equip_reset_registry();
     collectionlib_run_slot_registration();
 
+    // Highest registered item per row (1..3). The item at that column is the
+    // visual end of the row - pressing right there needs to wrap to item 1
+    // (see grid_cell: items 5+ are parked on hidden columns 2/1/0, so without
+    // an explicit navRight the reverse-lookup chain that drives rightward nav
+    // has nothing to find there and falls through to the raw vanilla column
+    // scan, which walks backwards into the just-visited item forever instead
+    // of wrapping to the front).
+    u8 maxItemInRow[4] = {};
+    for (int id = 0; id < custom_equip_count(); id++) {
+        const CustomEquipDef* d = custom_equip_get(id);
+        const u8 row = d->kind == CE_SWORD ? 1 : d->kind == CE_SHIELD ? 2 : 3;
+        if (d->item > maxItemInRow[row]) maxItemInRow[row] = d->item;
+    }
+
     for (int id = 0; id < custom_equip_count(); id++) {
         const CustomEquipDef* d = custom_equip_get(id);
         const u8 row  = d->kind == CE_SWORD ? 1 : d->kind == CE_SHIELD ? 2 : 3;
@@ -184,6 +198,7 @@ static void add_custom_equip_slots(J2DScreen* screen) {
         s.autoLayout.posX = collection_slot_x(static_cast<f32>(d->item - 1));
         s.autoLayout.posY = rowY;
         if (d->item > 1) s.autoLayout.navLeft = { row, static_cast<u8>(d->item - 1) };
+        if (d->item == maxItemInRow[row]) s.autoLayout.navRight = { row, 1 };
         if (row > 1) {
             u8 upItem = find_closest_item(row - 1, d->item);
             s.autoLayout.navUp = { static_cast<u8>(row - 1), upItem };
