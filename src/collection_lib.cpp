@@ -8,6 +8,7 @@
 
 #include <collection_lib/collection_lib.hpp>
 #include "d/d_meter2.h"
+#include "d/d_meter2_draw.h"
 
 // Implementation units, in the original dependency order.
 #include "collection_common.cpp"
