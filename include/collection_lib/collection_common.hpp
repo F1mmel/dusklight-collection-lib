@@ -58,6 +58,7 @@ struct CollectionVanillaSlotDef {
     ResTIMG* icon = nullptr;             // icon texture (required for built cells)
 };
 
+int collectionlib_add_vanilla_slot(u8 row, const CollectionVanillaSlotDef& def);
 int collectionlib_add_vanilla_sword_slot(const CollectionVanillaSlotDef& def);
 int collectionlib_add_vanilla_shield_slot(const CollectionVanillaSlotDef& def);
 int collectionlib_add_vanilla_tunic_slot(const CollectionVanillaSlotDef& def);

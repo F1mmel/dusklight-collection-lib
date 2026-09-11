@@ -69,6 +69,7 @@ static int cl_add_vanilla_slot(u8 row, const CollectionVanillaSlotDef& def) {
     return s_vanillaSlotCount++;
 }
 
+int collectionlib_add_vanilla_slot(u8 row, const CollectionVanillaSlotDef& def) { return cl_add_vanilla_slot(row, def); }
 int collectionlib_add_vanilla_sword_slot(const CollectionVanillaSlotDef& def) { return cl_add_vanilla_slot(1, def); }
 int collectionlib_add_vanilla_shield_slot(const CollectionVanillaSlotDef& def) { return cl_add_vanilla_slot(2, def); }
 int collectionlib_add_vanilla_tunic_slot(const CollectionVanillaSlotDef& def) { return cl_add_vanilla_slot(3, def); }
