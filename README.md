@@ -89,8 +89,6 @@ MOD_EXPORT ModResult mod_initialize(ModError*) {
 
     // Optional feature policies (the library holds no settings of its own;
     // your mod owns its config and injects the decisions as predicates).
-    collectionlib_set_keep_ordon_shield_policy([]() { return true; });   // ordon shield stays
-    collectionlib_set_unequip_policy([]() { return true; });             // "Unequip" action
 
     // The library (re-)runs this callback on init and on every collection
     // screen build - registration is idempotent per (kind, item).
@@ -194,8 +192,6 @@ register a custom equip slot at an explicit column.
 
 | Function | Purpose |
 | --- | --- |
-| `collectionlib_set_unequip_policy(bool (*)())` | Injected policy: "Unequip" action offered? |
-| `collectionlib_set_keep_ordon_shield_policy(bool (*)())` | Injected policy: ordon shield never leaves the collection? |
 | `collectionlib_set_register_callback(void (*)())` | Provide the function that registers all of the mod's slots |
 | `collectionlib_register_slot(const CustomEquipDef&)` | Add a custom slot; returns the slot id (call from the callback) |
 | `collectionlib_add_sword_slot / add_shield_slot / add_tunic_slot` | Register a slot at an explicit column |
