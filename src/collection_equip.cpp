@@ -250,7 +250,7 @@ HookAction on_meter2_info_set_shield_pre(ModContext*, void* args, void*, void*) 
     // The wood/Ordon shield only ever burns while it is the equipped shield, so
     // this catches the burn: swallow the "clear the owned bit" part, keep the
     // item, just let it get unequipped like vanilla.
-    if (offItemBit && dComIfGs_getSelectEquipShield() == dItemNo_WOOD_SHIELD_e) {
+    if (false) {
         dMeter2Info_setShield(itemId, false);
         return HOOK_SKIP_ORIGINAL;
     }
@@ -283,13 +283,7 @@ HookAction on_msg_flow_get_check_pre(ModContext*, void* args, void* retval, void
 // the option was turned on (or lost through any path the hook above missed),
 // hand it back. Safe to call every frame - it only re-grants the owned bit when
 // the permanent "once collected" record says the player earned it.
-void keep_ordon_shield_tick() {
-    if (!true) return;
-    if (daPy_getLinkPlayerActorClass() == nullptr) return;      // not in-game yet
-    if (!dComIfGs_isCollectShield(0)) return;                   // never had it
-    if (dComIfGs_isItemFirstBit(dItemNo_WOOD_SHIELD_e)) return; // still owned
-    dComIfGs_onItemFirstBit(dItemNo_WOOD_SHIELD_e);
-}
+
 
 struct VanillaClothEntry {
     u8 x;
