@@ -1242,9 +1242,27 @@ static void custom_equip_apply(daAlink_c* a, bool duringRebuild) {
                 // real faulting line is still unidentified. Log every step so the
                 // NEXT report pins it down by the last line printed, instead of
                 // guessing again.
-                log_collect_info("[CustomEquip] tunic swap: begin '%s' (model=%p hat=%p face=%p hand=%p)",
+                //
+                // 2026-09-12: confirmed by log comparison against the vanilla-tunic
+                // path that changeLink() itself places Link correctly (identical PRE/
+                // POST position for both paths) - the Z drift only appears AFTER this
+                // swap runs, custom-tunic-only. A custom body .bmd exported by a
+                // modding tool can carry a non-zero baked root-joint translation (the
+                // original object's DCC-tool origin), and a->changeModelDataDirect(1)
+                // below re-derives Link's placement from the newly assigned body
+                // model's own transform - so a body model with such a baked offset
+                // drags Link's world position along with it. Bracket the whole swap in
+                // the same save/restore-position pattern already used around
+                // changeLink() (collection_equip.cpp) so whichever step causes it, it
+                // can't leave Link somewhere else than where changeLink() (correctly)
+                // already put him.
+                const cXyz savedSwapPos = a->current.pos;
+                const s16  savedSwapAngleY = a->current.angle.y;
+
+                log_collect_info("[CustomEquip] tunic swap: begin '%s' (model=%p hat=%p face=%p hand=%p) pos=(%.1f,%.1f,%.1f)",
                                   tunicEntry->def.name, tunicEntry->model, tunicEntry->hatModel,
-                                  tunicEntry->faceModel, tunicEntry->handModel);
+                                  tunicEntry->faceModel, tunicEntry->handModel,
+                                  savedSwapPos.x, savedSwapPos.y, savedSwapPos.z);
 
                 if (s_originalLinkModel == nullptr) {
                     s_originalLinkModel = a->mpLinkModel;
@@ -1348,6 +1366,15 @@ static void custom_equip_apply(daAlink_c* a, bool duringRebuild) {
                             }
                         }
                     }
+                }
+                if (a->current.pos.x != savedSwapPos.x || a->current.pos.y != savedSwapPos.y ||
+                    a->current.pos.z != savedSwapPos.z) {
+                    log_collect_info("[CustomEquip] tunic swap: pos DRIFTED during swap "
+                                      "(%.1f,%.1f,%.1f) -> (%.1f,%.1f,%.1f) - restoring",
+                                      savedSwapPos.x, savedSwapPos.y, savedSwapPos.z,
+                                      a->current.pos.x, a->current.pos.y, a->current.pos.z);
+                    a->current.pos = savedSwapPos;
+                    a->current.angle.y = savedSwapAngleY;
                 }
                 log_collect_info("[CustomEquip] tunic swap: complete");
             }
