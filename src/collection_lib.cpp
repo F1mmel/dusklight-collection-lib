@@ -412,7 +412,6 @@ ModResult collectionlib_init(const HookService* hook_svc, const LogService* log_
 void collectionlib_update() {
     collection_page_update();
     custom_equip_update();
-    keep_ordon_shield_tick();
 }
 
 void collectionlib_shutdown() {

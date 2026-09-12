@@ -13,7 +13,6 @@ HookAction on_wait_proc_pre(ModContext*, void* args, void*, void*) {
     // Make sure a kept-but-burned Ordon shield is back in the inventory before
     // the player can select its slot, so the equip takes the normal "already
     // owned" path.
-    keep_ordon_shield_tick();
 
     apply_collect_shifts(collect2D);
 

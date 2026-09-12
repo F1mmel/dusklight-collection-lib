@@ -51,7 +51,6 @@ HookAction on_set_select_equip_clothes_pre(ModContext*, void* args, void*, void*
 // Shield preservation hook for keep Ordon Shield
 DEFINE_HOOK(&dMeter2Info_setShield, Meter2InfoSetShieldHook);
 HookAction on_meter2_info_set_shield_pre(ModContext*, void* args, void*, void*);
-void keep_ordon_shield_tick();
 
 // Lets shops sell the (distinct) Wooden Shield even though "keep Ordon Shield"
 // makes the game still see you owning the Ordon Shield.
