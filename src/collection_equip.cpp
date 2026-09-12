@@ -359,7 +359,18 @@ void on_da_alink_create_post(ModContext*, void*, void*, void*) {
 // every moment the custom tunic swap needs to be (re-)applied. Doing it here, in
 // the same call that builds the vanilla models, means no plain base model is ever
 // drawn (fade-in, un-transform, clothes swap).
-HookAction on_da_alink_change_link_pre(ModContext*, void*, void*, void*) {
+// Position save/restore: the changeLink rebuild can reset Link's position
+// offset during area transitions. Save before, restore after.
+static cXyz s_savedLinkPos;
+static s16 s_savedLinkAngleY = 0;
+
+HookAction on_da_alink_change_link_pre(ModContext*, void* args, void*, void*) {
+    // Save Link's position BEFORE the changeLink rebuild.
+    daAlink_c* alink = mods::arg<daAlink_c*>(args, 0);
+    if (alink != nullptr) {
+        s_savedLinkPos = alink->current.pos;
+        s_savedLinkAngleY = alink->current.angle.y;
+    }
     // The custom tunic is grafted onto a specific vanilla clothes model - force
     // that base so changeLink() builds the right skeleton + sub-models.
     if (custom_equip_active(CE_TUNIC) && !s_inAlinkCreate) {
@@ -377,6 +388,14 @@ HookAction on_da_alink_change_link_pre(ModContext*, void*, void*, void*) {
 
 void on_da_alink_change_link_post(ModContext*, void* args, void*, void*) {
     custom_equip_set_link_model_wolf(false);   // mpLinkModel is now a human model
+
+    // Restore Link's position AFTER the model rebuild.
+    daAlink_c* alink = mods::arg<daAlink_c*>(args, 0);
+    if (alink != nullptr && (s_savedLinkPos.x != 0.0f || s_savedLinkPos.z != 0.0f)) {
+        alink->current.pos = s_savedLinkPos;
+        alink->current.angle.y = s_savedLinkAngleY;
+    }
+
     if (args) custom_equip_on_alink_created(mods::arg<daAlink_c*>(args, 0));
 }
 
