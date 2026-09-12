@@ -65,6 +65,44 @@ Mtx s_lastBaseMtx[3];
 bool s_hasLastBaseMtx[3] = { false, false, false };
 bool s_linkModelIsWolf = false;
 
+// Diagnostic: logs every current.pos change for a while after a changeLink()/
+// tunic-swap, so a reported position bug can be pinned to an exact frame.
+// 2026-09-12 finding: an A/B log (vanilla clothes vs custom tunic, same shop
+// entry, same instrumentation) showed the steady multi-second per-frame Z creep
+// is IDENTICAL frame-for-frame in both cases - a normal vanilla scripted
+// "walk from the door into the shop" root-motion animation, not a bug, and must
+// NOT be touched. The only actual divergence is exactly the first two frames
+// after a custom-tunic swap, which jump by ~750 and ~1140 units respectively
+// (a normal frame here is 1-10 units) before locking onto the same shared walk
+// cycle as vanilla. That shape - one-time huge deltas only right at a model
+// swap, then perfectly normal afterward - is a root-motion sampling glitch:
+// the engine's per-frame move code diffs the currently-playing animation's root
+// joint pose against last frame's sample to derive speed, and swapping the
+// J3DModel mid-animation makes that comparison straddle two unrelated
+// skeletons (old model's joint layout vs the new custom one), producing a
+// phantom one-frame "jump" as if Link had teleported.
+int s_tunicPosWatchFrames = 0;
+cXyz s_tunicPosWatchLast = {};
+// 2026-09-12, second finding: the position clamp fixed the Z drift, but the
+// camera still ended up facing the wrong way - logging confirmed current.angle
+// is untouched by the glitch (identical before/after every clamped jump), so
+// that wasn't it. fopAc_ac_c carries a SEPARATE field, shape_angle, distinct
+// from current.angle - current.angle is the logical/physics-facing angle,
+// shape_angle is what the actor's own model/shape actually gets drawn (and
+// almost certainly what the camera orients off), and the two can diverge. Track
+// and clamp shape_angle instead (current.angle is still tracked/logged in case
+// it turns out to matter after all, harmless either way).
+csXyz s_tunicAngleWatchLast = {};
+csXyz s_tunicShapeAngleWatchLast = {};
+
+// Active fix: for a short window right after a tunic swap, any per-frame jump
+// far outside the normal 1-10 unit walk-animation range gets reverted (both the
+// position and the speed that produced it) instead of just logged. Only armed
+// by the tunic-swap path itself (NOT the generic every-changeLink watch below),
+// so plain vanilla-clothes movement is never touched.
+int s_tunicPosClampFrames = 0;
+constexpr f32 kTunicPosClampThreshold = 150.0f;  // normal walk deltas seen: <10; glitch deltas seen: >750
+
 static J3DModel* s_originalLinkModel = nullptr;
 static J3DModel* s_originalHatModel  = nullptr;
 static J3DModel* s_originalFaceModel = nullptr;
@@ -1201,6 +1239,63 @@ void custom_equip_update() {
     }
 
     custom_equip_apply(player());
+
+    if (s_tunicPosWatchFrames > 0) {
+        daAlink_c* a = player();
+        if (a != nullptr) {
+            cXyz p = a->current.pos;
+
+            // Active fix: only while s_tunicPosClampFrames is armed (right after OUR
+            // tunic swap - see comment at its declaration), revert any per-frame jump
+            // far outside the normal 1-10 unit walk-animation range. Confirmed via A/B
+            // log against vanilla clothes that the normal steady creep never exceeds
+            // ~10 units/frame, while the root-motion swap glitch produces one-time
+            // jumps of 700-1100+ units - kTunicPosClampThreshold sits safely between
+            // the two, so this can't clip the legitimate shared walk-in animation.
+            if (s_tunicPosClampFrames > 0) {
+                const f32 dx = p.x - s_tunicPosWatchLast.x;
+                const f32 dy = p.y - s_tunicPosWatchLast.y;
+                const f32 dz = p.z - s_tunicPosWatchLast.z;
+                if (dx * dx + dy * dy + dz * dz > kTunicPosClampThreshold * kTunicPosClampThreshold) {
+                    // Same root-motion glitch corrupts current.angle right alongside
+                    // current.pos (a walk animation's root joint bakes both translation
+                    // and facing) - revert both together instead of just position, or
+                    // Link ends up standing in the right spot but facing the wrong way
+                    // (and the camera, which orients off his facing, follows him into it).
+                    log_collect_info("[CustomEquip] pos-watch: CLAMPED anomalous jump "
+                                      "(%.1f,%.1f,%.1f) -> (%.1f,%.1f,%.1f), angle (%d,%d,%d) -> (%d,%d,%d), "
+                                      "shape_angle (%d,%d,%d) -> (%d,%d,%d) - reverting (root-motion glitch "
+                                      "from the model swap, not a real move)",
+                                      s_tunicPosWatchLast.x, s_tunicPosWatchLast.y, s_tunicPosWatchLast.z,
+                                      p.x, p.y, p.z,
+                                      (int)s_tunicAngleWatchLast.x, (int)s_tunicAngleWatchLast.y, (int)s_tunicAngleWatchLast.z,
+                                      (int)a->current.angle.x, (int)a->current.angle.y, (int)a->current.angle.z,
+                                      (int)s_tunicShapeAngleWatchLast.x, (int)s_tunicShapeAngleWatchLast.y, (int)s_tunicShapeAngleWatchLast.z,
+                                      (int)a->shape_angle.x, (int)a->shape_angle.y, (int)a->shape_angle.z);
+                    a->current.pos = s_tunicPosWatchLast;
+                    a->current.angle = s_tunicAngleWatchLast;
+                    a->shape_angle = s_tunicShapeAngleWatchLast;
+                    a->speed.x = a->speed.y = a->speed.z = 0.0f;
+                    a->speedF = 0.0f;
+                    p = s_tunicPosWatchLast;
+                }
+                s_tunicPosClampFrames--;
+            }
+
+            if (p.x != s_tunicPosWatchLast.x || p.y != s_tunicPosWatchLast.y || p.z != s_tunicPosWatchLast.z) {
+                log_collect_info("[CustomEquip] pos-watch: current.pos changed (%.1f,%.1f,%.1f) -> (%.1f,%.1f,%.1f) "
+                                  "speed=(%.2f,%.2f,%.2f) speedF=%.2f shape_angle=(%d,%d,%d) [%d frames left]",
+                                  s_tunicPosWatchLast.x, s_tunicPosWatchLast.y, s_tunicPosWatchLast.z,
+                                  p.x, p.y, p.z, a->speed.x, a->speed.y, a->speed.z, a->speedF,
+                                  (int)a->shape_angle.x, (int)a->shape_angle.y, (int)a->shape_angle.z,
+                                  s_tunicPosWatchFrames);
+                s_tunicPosWatchLast = p;
+            }
+            s_tunicAngleWatchLast = a->current.angle;
+            s_tunicShapeAngleWatchLast = a->shape_angle;
+        }
+        s_tunicPosWatchFrames--;
+    }
 }
 
 // Restore the equipped custom gear onto Link: (re)build the models and swap the
@@ -1264,6 +1359,17 @@ static void custom_equip_apply(daAlink_c* a, bool duringRebuild) {
                                   tunicEntry->faceModel, tunicEntry->handModel,
                                   savedSwapPos.x, savedSwapPos.y, savedSwapPos.z);
 
+                // Start the post-swap position watchdog (see s_tunicPosWatchFrames
+                // comment) - 300 frames (~5s at 60fps) of coverage past the swap.
+                s_tunicPosWatchFrames = 300;
+                s_tunicPosWatchLast = savedSwapPos;
+                s_tunicAngleWatchLast = a->current.angle;
+                s_tunicShapeAngleWatchLast = a->shape_angle;
+                // Arm the active anomalous-jump clamp for a handful of frames right
+                // after THIS swap - the root-motion glitch only ever showed up in the
+                // first 1-2 frames post-swap, this just gives it margin.
+                s_tunicPosClampFrames = 10;
+
                 if (s_originalLinkModel == nullptr) {
                     s_originalLinkModel = a->mpLinkModel;
                     s_originalHatModel  = a->mpLinkHatModel;
@@ -1310,6 +1416,22 @@ static void custom_equip_apply(daAlink_c* a, bool duringRebuild) {
                 a->changeModelDataDirect(1);
                 log_collect_info("[CustomEquip] tunic swap: step 5 done, mpFaceBtp=%p mpFaceBtk=%p",
                                   a->mpFaceBtp, a->mpFaceBtk);
+
+                // 5b. Reset whatever baseline the engine's per-frame root-motion/move
+                // code diffs the current animation's root-joint sample against. The
+                // pos-watch instrumentation nailed the actual bug down to a phantom
+                // one-frame "jump" right after swapping mpLinkModel mid-animation -
+                // consistent with that diff comparing last frame's sample (from the
+                // OLD model's skeleton) against this frame's (from the NEW, unrelated
+                // custom skeleton). The position/angle clamp below catches the
+                // resulting jump reactively, one frame late - too late for the camera,
+                // which reads the player's position/facing earlier in the frame than
+                // this mod's own per-frame update runs, so it locks onto the bad data
+                // before we ever get to revert it (reported: camera ends up looking
+                // exactly backward). resetRootMtx() should clear that stale baseline
+                // at the source, before a bad delta is ever computed, which would fix
+                // the camera too since it would never see bad data in the first place.
+                a->resetRootMtx();
 
                 // 6. Body material shapes
                 log_collect_info("[CustomEquip] tunic swap: step 6 (body material shapes)");
@@ -1376,6 +1498,26 @@ static void custom_equip_apply(daAlink_c* a, bool duringRebuild) {
                     a->current.pos = savedSwapPos;
                     a->current.angle.y = savedSwapAngleY;
                 }
+
+                // A/B log comparison (vanilla vs custom tunic, same shop entry) showed
+                // Link's position keeps creeping in -Z for ~5s straight after this swap,
+                // ONLY on the custom-tunic path - X/Y untouched, no deceleration toward a
+                // fixed target. That shape (a steady per-frame delta, not a one-time snap)
+                // is what fopAc_ac_c::speed/speedF looks like: the actor's own per-frame
+                // velocity, which vanilla's move code adds to current.pos every tick and
+                // is expected to be zeroed once Link is idle/standing. If the swap (body
+                // model replacement + changeModelDataDirect) leaves a stale non-zero
+                // speed from whatever Link was doing right before changeLink() fired,
+                // nothing here ever clears it. Log it before zeroing so the next report
+                // confirms it was actually non-zero (i.e. this was the real cause, not a
+                // guess) - if it's already (0,0,0) here the theory is wrong and this is a
+                // no-op.
+                if (a->speed.x != 0.0f || a->speed.y != 0.0f || a->speed.z != 0.0f || a->speedF != 0.0f) {
+                    log_collect_info("[CustomEquip] tunic swap: clearing stale speed=(%.2f,%.2f,%.2f) speedF=%.2f",
+                                      a->speed.x, a->speed.y, a->speed.z, a->speedF);
+                    a->speed.x = a->speed.y = a->speed.z = 0.0f;
+                    a->speedF = 0.0f;
+                }
                 log_collect_info("[CustomEquip] tunic swap: complete");
             }
         } else if (s_originalLinkModel != nullptr) {
@@ -1438,6 +1580,17 @@ void custom_equip_on_alink_created(daAlink_c* a) {
     // and running here mid Wolf->Human morph is exactly what makes the custom
     // model morph in instead of popping at the very end.
     if (a == nullptr) return;
+
+    // Diagnostic: (re-)arm the position watchdog on EVERY changeLink() completion,
+    // regardless of whether anything custom is equipped - this gives a same-stage,
+    // vanilla-vs-custom-tunic comparison with identical instrumentation, to check
+    // whether the post-swap Z drift already reported (see s_tunicPosWatchFrames)
+    // is unique to the custom-tunic path or also happens on a plain vanilla-clothes
+    // changeLink() (e.g. a normal scripted "walk from the door to the counter"
+    // shop-entry animation would drift Z on BOTH paths and wouldn't be a bug at all).
+    s_tunicPosWatchFrames = 300;
+    s_tunicPosWatchLast = a->current.pos;
+
     // Everything custom_equip_apply() touches on the actor must already exist.
     if (a->mpLinkModel == nullptr || a->mpLinkHatModel == nullptr ||
         a->mpLinkFaceModel == nullptr || a->mpLinkHandModel == nullptr) return;
