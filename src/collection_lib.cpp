@@ -56,16 +56,12 @@ static int s_vanillaSlotCount = 0;
 
 static int cl_add_vanilla_slot(u8 row, const CollectionVanillaSlotDef& def) {
     if (def.unlocked == nullptr) {
-        log_collect_info("[CollectionLib] vanilla slot row %d REJECTED: unlocked == nullptr", row);
         return -1;
     }
     if (s_vanillaSlotCount >= 8) {
-        log_collect_info("[CollectionLib] vanilla slot row %d REJECTED: table full", row);
         return -1;
     }
     s_vanillaSlots[s_vanillaSlotCount] = {row, 1, def};
-    log_collect_info("[CollectionLib] vanilla slot row %d claimed (index %d)", row,
-                     s_vanillaSlotCount);
     return s_vanillaSlotCount++;
 }
 
@@ -126,16 +122,7 @@ void collectionlib_run_slot_registration() {
     }
     // Diagnostics: after the callback, which columns of each row are claimed?
     if (g_logSvc != nullptr && g_modCtx != nullptr) {
-        char buf[192];
-        int n = std::snprintf(buf, sizeof(buf), "[CollectionLib] registration: %d vanilla claims;",
-                              s_vanillaSlotCount);
-        for (u8 row = 1; row <= 3 && n > 0 && n < (int)sizeof(buf); ++row) {
-            n += std::snprintf(buf + n, sizeof(buf) - n, " r%d:", row);
-            for (u8 col = 1; col <= 6; ++col) {
-                n += std::snprintf(buf + n, sizeof(buf) - n, "%d", cl_item_exists(row, col) ? 1 : 0);
-            }
-        }
-        g_logSvc->info(g_modCtx, buf);
+
     }
 }
 
@@ -233,30 +220,23 @@ static u8 cl_next_free_column(u8 row) {
 int collectionlib_add_next_sword_slot(const CustomEquipDef& def) {
     const u8 col = cl_next_free_column(1);
     const int id = (col != 0) ? collectionlib_add_sword_slot(col, def) : -1;
-    log_collect_info("[CollectionLib] add_next_sword '%s' -> col %d, id %d",
-                     def.name != nullptr ? def.name : "?", col, id);
     return id;
 }
 
 int collectionlib_add_next_shield_slot(const CustomEquipDef& def) {
     const u8 col = cl_next_free_column(2);
     const int id = (col != 0) ? collectionlib_add_shield_slot(col, def) : -1;
-    log_collect_info("[CollectionLib] add_next_shield '%s' -> col %d, id %d",
-                     def.name != nullptr ? def.name : "?", col, id);
     return id;
 }
 
 int collectionlib_add_next_tunic_slot(const CustomEquipDef& def) {
     const u8 col = cl_next_free_column(3);
     const int id = (col != 0) ? collectionlib_add_tunic_slot(col, def) : -1;
-    log_collect_info("[CollectionLib] add_next_tunic '%s' -> col %d, id %d",
-                     def.name != nullptr ? def.name : "?", col, id);
     return id;
 }
 
 void collectionlib_request_reload() {
     if (g_logSvc != nullptr && g_modCtx != nullptr) {
-        g_logSvc->info(g_modCtx, "[CollectionLib] reload requested");
     }
     s_needReloadCollect = true;
 }
@@ -297,10 +277,7 @@ static void ensure_system_heap_capacity() {
                 JKRHeap::setSystemHeap(newSysHeap);
                 s_done = true;
                 if (g_logSvc != nullptr && g_modCtx != nullptr) {
-                    char buf[128];
-                    std::snprintf(buf, sizeof(buf), "[CollectionLib] Expanded system heap to %u MB (prev free: %d KB)",
-                                  targetSize / (1024 * 1024), sysHeap->getFreeSize() / 1024);
-                    g_logSvc->info(g_modCtx, buf);
+
                 }
             }
         }
@@ -347,8 +324,6 @@ ModResult collectionlib_init(const HookService* hook_svc, const LogService* log_
     collectionlib_run_slot_registration();
     custom_equip_restore_from_save();
 
-    log_collect_info("[CollectionLib] init: vanillaSlots=%d", s_vanillaSlotCount);
-
     if (hook_svc != nullptr) {
         // Area transition & spawn preservation
         mods::hook::add_pre<DaAlinkCreateHook>(hook_svc, on_da_alink_create_pre);
@@ -376,7 +351,6 @@ ModResult collectionlib_init(const HookService* hook_svc, const LogService* log_
         // future engine/SDK update that changes this doesn't go unnoticed.
         ModResult r_getItemTag = mods::hook::add_pre<GetItemTagHook>(hook_svc, on_get_item_tag_pre);
         ModResult r_pointerWait = mods::hook::add_pre<PointerWaitHook>(hook_svc, on_pointer_wait_pre);
-        log_collect_info("[CollectionLib] hook install: GetItemTagHook=%d PointerWaitHook=%d", (int)r_getItemTag, (int)r_pointerWait);
 
         // Resolve dusk::menu_pointer's hit_pane/set_hover_target/peek_click
         // addresses directly (symbol lookup only, no detour/patch attempt) so
@@ -386,21 +360,18 @@ ModResult collectionlib_init(const HookService* hook_svc, const LogService* log_
         if (hook_svc->resolve) {
             void* hitPaneAddr = nullptr;
             ModResult r_resolve = hook_svc->resolve(mod_ctx, kHitPaneMangledName, &hitPaneAddr, nullptr);
-            log_collect_info("[CollectionLib] resolve hit_pane: result=%d addr=%p", (int)r_resolve, hitPaneAddr);
             if (r_resolve == MOD_OK && hitPaneAddr) {
                 g_hitPaneFn = reinterpret_cast<bool (*)(CPaneMgr*, f32)>(hitPaneAddr);
             }
 
             void* setHoverTargetAddr = nullptr;
             ModResult r_resolve3 = hook_svc->resolve(mod_ctx, kSetHoverTargetMangledName, &setHoverTargetAddr, nullptr);
-            log_collect_info("[CollectionLib] resolve set_hover_target: result=%d addr=%p", (int)r_resolve3, setHoverTargetAddr);
             if (r_resolve3 == MOD_OK && setHoverTargetAddr) {
                 g_setHoverTargetFn = reinterpret_cast<void (*)(u16)>(setHoverTargetAddr);
             }
 
             void* peekClickAddr = nullptr;
             ModResult r_resolve4 = hook_svc->resolve(mod_ctx, kPeekClickMangledName, &peekClickAddr, nullptr);
-            log_collect_info("[CollectionLib] resolve peek_click: result=%d addr=%p", (int)r_resolve4, peekClickAddr);
             if (r_resolve4 == MOD_OK && peekClickAddr) {
                 g_peekClickFn = reinterpret_cast<bool (*)()>(peekClickAddr);
             }
@@ -413,7 +384,6 @@ ModResult collectionlib_init(const HookService* hook_svc, const LogService* log_
         // (unchanged for every other cell), fall back to our own hit_pane() check
         // against those 3 known-good panes only if it found nothing.
         ModResult r_pointerWaitReplace = mods::hook::replace<PointerWaitHook>(hook_svc, on_pointer_wait_replace);
-        log_collect_info("[CollectionLib] hook install: PointerWaitReplace=%d", (int)r_pointerWaitReplace);
         mods::hook::add_post<PointerWaitHook>(hook_svc, on_pointer_wait_post);
         mods::hook::add_pre<SetItemNameStringHook>(hook_svc, on_set_item_name_string_pre);
         mods::hook::add_pre<GetStringKanjiHook>(hook_svc, on_get_string_kanji_pre);

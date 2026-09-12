@@ -374,44 +374,6 @@ HookAction on_pointer_wait_pre(ModContext*, void* args, void*, void*) {
 }
 
 void on_pointer_wait_post(ModContext*, void* args, void*, void*) {
-    // Diagnostics: log the landed cell once per CHANGE, with the resolved slot.
-    static u8 s_lastX = 0xFF, s_lastY = 0xFF;
-    dMenu_Collect2D_c* c2d = args ? mods::arg<dMenu_Collect2D_c*>(args, 0) : nullptr;
-    if (c2d && (c2d->mCursorX != s_lastX || c2d->mCursorY != s_lastY)) {
-        s_lastX = c2d->mCursorX;
-        s_lastY = c2d->mCursorY;
-        const SlotSpec* slot = slot_at(c2d->mCursorX, c2d->mCursorY);
-        const char* name = nullptr;
-        char nameBuf[64];
-        if (slot && slot->name.str) {
-            name = slot->name.str;
-        } else if (slot) {
-            if (slot->name.msgID == 0x18d) name = "Ordon Sword";
-            else if (slot->name.msgID == 0x190) name = "Wooden Shield";
-            else {
-                std::snprintf(nameBuf, sizeof(nameBuf), "msgId %u", (unsigned)slot->name.msgID);
-                name = nameBuf;
-            }
-        } else {
-            if (c2d->mCursorY == 0) {
-                if (c2d->mCursorX == 3) name = "Wooden Sword";
-                else if (c2d->mCursorX == 5) name = "Master Sword";
-                else if (c2d->mCursorX == 6) name = "Heart Container";
-            } else if (c2d->mCursorY == 1) {
-                if (c2d->mCursorX == 3) name = "Ordon Shield";
-                else if (c2d->mCursorX == 5) name = "Hylian Shield";
-            } else if (c2d->mCursorY == 2) {
-                if (c2d->mCursorX == 4) name = "Kokiri Clothes";
-                else if (c2d->mCursorX == 5) name = "Zora Armor";
-                else if (c2d->mCursorX == 6) name = "Magic Armor";
-            }
-            if (!name) name = "<no slot spec>";
-        }
-        char buf[192];
-        std::snprintf(buf, sizeof(buf), "[CollectionLib] hover -> (%d,%d) '%s'",
-                      (int)c2d->mCursorX, (int)c2d->mCursorY, name);
-        g_logSvc->info(g_modCtx, buf);
-    }
     for (int i = 0; i < s_modSlotBoundsSaveCount; i++) {
         if (s_modSlotBoundsSave[i].pane) {
             s_modSlotBoundsSave[i].pane->mBounds = s_modSlotBoundsSave[i].bounds;

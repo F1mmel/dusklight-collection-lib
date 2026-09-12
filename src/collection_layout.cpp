@@ -762,18 +762,6 @@ void apply_collect_shifts(dMenu_Collect2D_c* collect2D) {
     static bool s_hasLoggedCollectState = false;
     if (!s_hasLoggedCollectState) {
         s_hasLoggedCollectState = true;
-        log_collect_info("[CollectionLib] State: keepOrdonShield=%d, hasOrdonShield=%d, hasWoodShield=%d, hasHylianShield=%d",
-                         cl_keep_ordon_shield_enabled(), hasOrdonShield, hasWoodShield, hasHylianShield);
-        log_collect_info("[CollectionLib] Shield Items: OrdonBit(0x2A)=%d, WoodBit(0x2B)=%d, HyliaBit(0x2C)=%d, curShield=0x%02X",
-                         dComIfGs_isItemFirstBit(dItemNo_WOOD_SHIELD_e),
-                         dComIfGs_isItemFirstBit(dItemNo_SHIELD_e),
-                         dComIfGs_isItemFirstBit(dItemNo_HYLIA_SHIELD_e),
-                         dComIfGs_getSelectEquipShield());
-        log_collect_info("[CollectionLib] Shield Panes: tate_n0=%p(vis=%d, parent=%p), slot_icon(4, 1)=%p(vis=%d, parent=%p), tate_00=%p(vis=%d, parent=%p), tate_01=%p(vis=%d, parent=%p)",
-                         tate_n0, tate_n0 ? tate_n0->isVisible() : -1, tate_n0 ? tate_n0->getParentPane() : nullptr,
-                         slot_icon(4, 1), slot_icon(4, 1) ? slot_icon(4, 1)->isVisible() : -1, slot_icon(4, 1) ? slot_icon(4, 1)->getParentPane() : nullptr,
-                         tate_00, tate_00 ? tate_00->isVisible() : -1, tate_00 ? tate_00->getParentPane() : nullptr,
-                         tate_01, tate_01 ? tate_01->isVisible() : -1, tate_01 ? tate_01->getParentPane() : nullptr);
         J2DPicture* picT00 = static_cast<J2DPicture*>(tate_00);
         JUTTexture* tex00 = picT00 ? picT00->getTexture(0) : nullptr;
         const ResTIMG* timg00 = tex00 ? tex00->getTexInfo() : nullptr;
@@ -781,13 +769,6 @@ void apply_collect_shifts(dMenu_Collect2D_c* collect2D) {
         JUTTexture* tex01 = picT01 ? picT01->getTexture(0) : nullptr;
         const ResTIMG* timg01 = tex01 ? tex01->getTexInfo() : nullptr;
         J2DPane* tate_gm_pane = slot_frame(4, 1);
-
-        log_collect_info("[CollectionLib] tate_00 tex: pic=%p, tex=%p, timg=%p",
-                         picT00, tex00, timg00);
-        log_collect_info("[CollectionLib] tate_01 tex: pic=%p, tex=%p, timg=%p",
-                         picT01, tex01, timg01);
-        log_collect_info("[CollectionLib] tate_gm frame: ptr=%p(vis=%d)",
-                         tate_gm_pane, tate_gm_pane ? tate_gm_pane->isVisible() : -1);
     }
 
     update_frame_highlights(collect2D);
