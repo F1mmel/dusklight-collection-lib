@@ -15,7 +15,9 @@
 #include "d/d_com_inf_game.h"
 #include "d/d_kankyo.h"
 #include "d/d_stage.h"
+#include "d/d_camera.h"
 #include "f_op/f_op_actor_mng.h"
+#include "f_op/f_op_camera_mng.h"
 #include "f_pc/f_pc_manager.h"
 #include "dolphin/pad.h"
 #include "m_Do/m_Do_mtx.h"
@@ -94,6 +96,32 @@ cXyz s_tunicPosWatchLast = {};
 // it turns out to matter after all, harmless either way).
 csXyz s_tunicAngleWatchLast = {};
 csXyz s_tunicShapeAngleWatchLast = {};
+
+// 2026-09-12, third finding: resetRootMtx() right after the model swap did NOT
+// change the jump pattern at all (identical magnitudes still occur and get
+// clamped) - so it isn't touching whatever produces this. And current.angle /
+// shape_angle are now proven byte-identical to vanilla in every logged frame,
+// yet the camera still ends up facing backward - so the camera isn't reading
+// either of those actor fields for its facing. It must be reading its OWN
+// state (camera_class::angle / view.lookat, via dComIfGp_getCamera) which our
+// clamp never touches at all. Log it alongside position/actor-angle so the next
+// report shows what the camera itself is doing when the glitch happens.
+csXyz s_tunicCamAngleWatchLast = {};
+
+// 2026-09-12, fifth finding: pinning camera.angle.y for the full watch window
+// fixed the yaw permanently (confirmed: stayed at -32768 the entire log, no
+// flip at all) - but the camera is STILL visually wrong, because view.lookat.eye
+// (the camera's actual world position, separate from angle) is ALSO corrupted
+// by the exact same glitch, at the exact same first frame - it jumps hundreds
+// of units off at the same moment current.pos does, then only creeps back
+// toward correct extremely slowly (still off by ~630 units after the whole
+// 300-frame/5s window). Unlike angle.y, eye legitimately moves every frame (the
+// camera keeps following Link), so it can't be pinned to a constant - instead,
+// snapshot eye/center right before the swap (last known-good) and revert them
+// at the exact moment a position anomaly is detected, the same way
+// current.pos/angle/shape_angle already get reverted there.
+cXyz s_tunicCamEyeWatchLast = {};
+cXyz s_tunicCamCenterWatchLast = {};
 
 // Active fix: for a short window right after a tunic swap, any per-frame jump
 // far outside the normal 1-10 unit walk-animation range gets reverted (both the
@@ -1256,7 +1284,8 @@ void custom_equip_update() {
                 const f32 dx = p.x - s_tunicPosWatchLast.x;
                 const f32 dy = p.y - s_tunicPosWatchLast.y;
                 const f32 dz = p.z - s_tunicPosWatchLast.z;
-                if (dx * dx + dy * dy + dz * dz > kTunicPosClampThreshold * kTunicPosClampThreshold) {
+                const bool jumpDetectedThisFrame = dx * dx + dy * dy + dz * dz > kTunicPosClampThreshold * kTunicPosClampThreshold;
+                if (jumpDetectedThisFrame) {
                     // Same root-motion glitch corrupts current.angle right alongside
                     // current.pos (a walk animation's root joint bakes both translation
                     // and facing) - revert both together instead of just position, or
@@ -1278,6 +1307,40 @@ void custom_equip_update() {
                     a->speed.x = a->speed.y = a->speed.z = 0.0f;
                     a->speedF = 0.0f;
                     p = s_tunicPosWatchLast;
+
+                    // Calculate target camera position behind Link facing in Link's look direction
+                    const f32 sinYaw = cM_ssin(a->shape_angle.y);
+                    const f32 cosYaw = cM_scos(a->shape_angle.y);
+
+                    cXyz diff = s_tunicCamEyeWatchLast - s_tunicCamCenterWatchLast;
+                    f32 dist = std::sqrt(diff.x * diff.x + diff.z * diff.z);
+                    if (dist < 100.0f || dist > 1000.0f) {
+                        dist = 300.0f;
+                    }
+                    f32 heightOffset = diff.y;
+                    if (heightOffset < -50.0f || heightOffset > 300.0f) {
+                        heightOffset = 0.0f;
+                    }
+
+                    cXyz targetCenter = a->current.pos;
+                    targetCenter.y += 130.0f;
+
+                    // Eye is behind Link (opposite of look direction)
+                    cXyz targetEye = targetCenter;
+                    targetEye.x -= sinYaw * dist;
+                    targetEye.z -= cosYaw * dist;
+                    targetEye.y += heightOffset;
+
+                    s_tunicCamCenterWatchLast = targetCenter;
+                    s_tunicCamEyeWatchLast = targetEye;
+
+                    if (dCamera_c* dcam = dCam_getBody()) {
+                        dcam->Reset(targetCenter, targetEye);
+                    }
+                    if (camera_process_class* cam = dComIfGp_getCamera(0)) {
+                        cam->view.lookat.eye = targetEye;
+                        cam->view.lookat.center = targetCenter;
+                    }
                 }
                 s_tunicPosClampFrames--;
             }
@@ -1293,6 +1356,33 @@ void custom_equip_update() {
             }
             s_tunicAngleWatchLast = a->current.angle;
             s_tunicShapeAngleWatchLast = a->shape_angle;
+
+            // Diagnostic: what is the CAMERA's own facing doing during this window?
+            camera_process_class* cam = dComIfGp_getCamera(0);
+            if (cam != nullptr) {
+                const csXyz camAngle = cam->angle;
+                if (camAngle.x != s_tunicCamAngleWatchLast.x || camAngle.y != s_tunicCamAngleWatchLast.y ||
+                    camAngle.z != s_tunicCamAngleWatchLast.z) {
+                    log_collect_info("[CustomEquip] pos-watch: camera angle changed (%d,%d,%d) -> (%d,%d,%d) "
+                                      "eye=(%.1f,%.1f,%.1f) center=(%.1f,%.1f,%.1f) [%d frames left]",
+                                      (int)s_tunicCamAngleWatchLast.x, (int)s_tunicCamAngleWatchLast.y, (int)s_tunicCamAngleWatchLast.z,
+                                      (int)camAngle.x, (int)camAngle.y, (int)camAngle.z,
+                                      cam->view.lookat.eye.x, cam->view.lookat.eye.y, cam->view.lookat.eye.z,
+                                      cam->view.lookat.center.x, cam->view.lookat.center.y, cam->view.lookat.center.z,
+                                      s_tunicPosWatchFrames);
+                    s_tunicCamAngleWatchLast = camAngle;
+                }
+                // Keep the eye/center revert-target fresh from legitimate movement ONLY when clamp window is done
+                if (s_tunicPosClampFrames == 0) {
+                    if (dCamera_c* dcam = dCam_getBody()) {
+                        s_tunicCamEyeWatchLast = dcam->Eye();
+                        s_tunicCamCenterWatchLast = dcam->Center();
+                    } else {
+                        s_tunicCamEyeWatchLast = cam->view.lookat.eye;
+                        s_tunicCamCenterWatchLast = cam->view.lookat.center;
+                    }
+                }
+            }
         }
         s_tunicPosWatchFrames--;
     }
@@ -1365,6 +1455,14 @@ static void custom_equip_apply(daAlink_c* a, bool duringRebuild) {
                 s_tunicPosWatchLast = savedSwapPos;
                 s_tunicAngleWatchLast = a->current.angle;
                 s_tunicShapeAngleWatchLast = a->shape_angle;
+                if (dCamera_c* dcam0 = dCam_getBody()) {
+                    s_tunicCamEyeWatchLast = dcam0->Eye();
+                    s_tunicCamCenterWatchLast = dcam0->Center();
+                } else if (camera_process_class* cam0 = dComIfGp_getCamera(0)) {
+                    s_tunicCamAngleWatchLast = cam0->angle;
+                    s_tunicCamEyeWatchLast = cam0->view.lookat.eye;
+                    s_tunicCamCenterWatchLast = cam0->view.lookat.center;
+                }
                 // Arm the active anomalous-jump clamp for a handful of frames right
                 // after THIS swap - the root-motion glitch only ever showed up in the
                 // first 1-2 frames post-swap, this just gives it margin.
@@ -1417,21 +1515,16 @@ static void custom_equip_apply(daAlink_c* a, bool duringRebuild) {
                 log_collect_info("[CustomEquip] tunic swap: step 5 done, mpFaceBtp=%p mpFaceBtk=%p",
                                   a->mpFaceBtp, a->mpFaceBtk);
 
-                // 5b. Reset whatever baseline the engine's per-frame root-motion/move
-                // code diffs the current animation's root-joint sample against. The
-                // pos-watch instrumentation nailed the actual bug down to a phantom
-                // one-frame "jump" right after swapping mpLinkModel mid-animation -
-                // consistent with that diff comparing last frame's sample (from the
-                // OLD model's skeleton) against this frame's (from the NEW, unrelated
-                // custom skeleton). The position/angle clamp below catches the
-                // resulting jump reactively, one frame late - too late for the camera,
-                // which reads the player's position/facing earlier in the frame than
-                // this mod's own per-frame update runs, so it locks onto the bad data
-                // before we ever get to revert it (reported: camera ends up looking
-                // exactly backward). resetRootMtx() should clear that stale baseline
-                // at the source, before a bad delta is ever computed, which would fix
-                // the camera too since it would never see bad data in the first place.
-                a->resetRootMtx();
+                // 5b. Sync old frame root joint translation to the new model's animation
+                // transform so transAnimeProc doesn't calculate a huge phantom delta.
+                if (a->field_0x2060 != nullptr && a->field_0x1f20 != nullptr && a->field_0x1f20->getAnm(0) != nullptr) {
+                    J3DTransformInfo ti;
+                    a->field_0x1f20->getAnm(0)->getTransform(0, &ti);
+                    if (J3DTransformInfo* oldTi = a->field_0x2060->getOldFrameTransInfo(0)) {
+                        oldTi->mTranslate = ti.mTranslate;
+                    }
+                    a->field_0x2060->initOldFrameMorf(0.0f, 0, 35);
+                }
 
                 // 6. Body material shapes
                 log_collect_info("[CustomEquip] tunic swap: step 6 (body material shapes)");
@@ -1590,6 +1683,16 @@ void custom_equip_on_alink_created(daAlink_c* a) {
     // shop-entry animation would drift Z on BOTH paths and wouldn't be a bug at all).
     s_tunicPosWatchFrames = 300;
     s_tunicPosWatchLast = a->current.pos;
+    s_tunicAngleWatchLast = a->current.angle;
+    s_tunicShapeAngleWatchLast = a->shape_angle;
+    if (dCamera_c* dcam0 = dCam_getBody()) {
+        s_tunicCamEyeWatchLast = dcam0->Eye();
+        s_tunicCamCenterWatchLast = dcam0->Center();
+    } else if (camera_process_class* cam0 = dComIfGp_getCamera(0)) {
+        s_tunicCamAngleWatchLast = cam0->angle;
+        s_tunicCamEyeWatchLast = cam0->view.lookat.eye;
+        s_tunicCamCenterWatchLast = cam0->view.lookat.center;
+    }
 
     // Everything custom_equip_apply() touches on the actor must already exist.
     if (a->mpLinkModel == nullptr || a->mpLinkHatModel == nullptr ||
