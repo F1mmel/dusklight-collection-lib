@@ -304,14 +304,11 @@ static J3DModel* load_single_bmd(void* bmd, u32 diffFlags = 0x11000084) {
     return mDoExt_J3DModel__create(data, 0x80000, diffFlags);
 }
 
-static void note_load_fail(Entry& e, const char* why) {
-    log_collect_info("[CustomEquip] load FAIL (%s): %s (try %u)", why, e.def.modelArc,
-                     static_cast<unsigned>(e.tryCount + 1));
+static void note_load_fail(Entry& e) {
     if (e.arc != nullptr) { JKRUnmountArchive(e.arc); e.arc = nullptr; }
     e.model = e.sheathModel = e.hatModel = e.faceModel = e.handModel = nullptr;
     if (++e.tryCount >= 30) {
         e.tried = true;
-        log_collect_info("[CustomEquip] giving up on %s", e.def.modelArc);
     }
 }
 
@@ -323,9 +320,7 @@ void load_model(Entry& e) {
 
     if (e.arcBuf.data == nullptr) {
         res->load(g_modCtx, e.def.modelArc, &e.arcBuf);
-        if (e.arcBuf.data == nullptr) { note_load_fail(e, "res->load"); return; }
-        log_collect_info("[CustomEquip] loaded %s (%u bytes)", e.def.modelArc,
-                         static_cast<unsigned>(e.arcBuf.size));
+        if (e.arcBuf.data == nullptr) { note_load_fail(e); return; }
     }
 
     JKRHeap* persistHeap = JKRHeap::getRootHeap();
@@ -333,7 +328,7 @@ void load_model(Entry& e) {
 
     if (e.arc == nullptr) {
         e.arc = JKRArchive::mount(e.arcBuf.data, persistHeap, JKRArchive::MOUNT_DIRECTION_HEAD);
-        if (e.arc == nullptr) { note_load_fail(e, "mount"); return; }
+        if (e.arc == nullptr) { note_load_fail(e); return; }
     }
 
     JKRHeap* old = mDoExt_setCurrentHeap(persistHeap);
@@ -349,10 +344,6 @@ void load_model(Entry& e) {
         if (!faceBmd) faceBmd = get_arc_res(e.arc, "al_face.bmd", 0x000E);
         if (faceBmd) {
             e.faceModel = load_single_bmd(faceBmd, 0x11020284);
-            const bool hasFaceBtp = arc_has_file_matching(e.arc, ".btp", "face");
-            const bool hasFaceBtk = arc_has_file_matching(e.arc, ".btk", "face");
-            log_collect_info("[CustomEquip] %s: dedicated face anims in archive: btp=%s btk=%s",
-                              e.def.modelArc, hasFaceBtp ? "yes" : "no", hasFaceBtk ? "yes" : "no");
         }
 
         void* handBmd = find_bmd_matching(e.arc, "hand");
@@ -397,14 +388,12 @@ void load_model(Entry& e) {
     mDoExt_setCurrentHeap(old);
 
     if (e.model == nullptr) {
-        note_load_fail(e, "build");
+        note_load_fail(e);
         return;
     }
 
     e.tried = true;
     e.tryCount = 0;
-    log_collect_info("[CustomEquip] model ready: %s (head=%p face=%p hands=%p sheath=%p)",
-                     e.def.modelArc, e.hatModel, e.faceModel, e.handModel, e.sheathModel);
 }
 
 Entry* active_entry(CustomEquipKind kind) {
@@ -1291,16 +1280,6 @@ void custom_equip_update() {
                     // and facing) - revert both together instead of just position, or
                     // Link ends up standing in the right spot but facing the wrong way
                     // (and the camera, which orients off his facing, follows him into it).
-                    log_collect_info("[CustomEquip] pos-watch: CLAMPED anomalous jump "
-                                      "(%.1f,%.1f,%.1f) -> (%.1f,%.1f,%.1f), angle (%d,%d,%d) -> (%d,%d,%d), "
-                                      "shape_angle (%d,%d,%d) -> (%d,%d,%d) - reverting (root-motion glitch "
-                                      "from the model swap, not a real move)",
-                                      s_tunicPosWatchLast.x, s_tunicPosWatchLast.y, s_tunicPosWatchLast.z,
-                                      p.x, p.y, p.z,
-                                      (int)s_tunicAngleWatchLast.x, (int)s_tunicAngleWatchLast.y, (int)s_tunicAngleWatchLast.z,
-                                      (int)a->current.angle.x, (int)a->current.angle.y, (int)a->current.angle.z,
-                                      (int)s_tunicShapeAngleWatchLast.x, (int)s_tunicShapeAngleWatchLast.y, (int)s_tunicShapeAngleWatchLast.z,
-                                      (int)a->shape_angle.x, (int)a->shape_angle.y, (int)a->shape_angle.z);
                     a->current.pos = s_tunicPosWatchLast;
                     a->current.angle = s_tunicAngleWatchLast;
                     a->shape_angle = s_tunicShapeAngleWatchLast;
@@ -1346,30 +1325,16 @@ void custom_equip_update() {
             }
 
             if (p.x != s_tunicPosWatchLast.x || p.y != s_tunicPosWatchLast.y || p.z != s_tunicPosWatchLast.z) {
-                log_collect_info("[CustomEquip] pos-watch: current.pos changed (%.1f,%.1f,%.1f) -> (%.1f,%.1f,%.1f) "
-                                  "speed=(%.2f,%.2f,%.2f) speedF=%.2f shape_angle=(%d,%d,%d) [%d frames left]",
-                                  s_tunicPosWatchLast.x, s_tunicPosWatchLast.y, s_tunicPosWatchLast.z,
-                                  p.x, p.y, p.z, a->speed.x, a->speed.y, a->speed.z, a->speedF,
-                                  (int)a->shape_angle.x, (int)a->shape_angle.y, (int)a->shape_angle.z,
-                                  s_tunicPosWatchFrames);
                 s_tunicPosWatchLast = p;
             }
             s_tunicAngleWatchLast = a->current.angle;
             s_tunicShapeAngleWatchLast = a->shape_angle;
 
-            // Diagnostic: what is the CAMERA's own facing doing during this window?
             camera_process_class* cam = dComIfGp_getCamera(0);
             if (cam != nullptr) {
                 const csXyz camAngle = cam->angle;
                 if (camAngle.x != s_tunicCamAngleWatchLast.x || camAngle.y != s_tunicCamAngleWatchLast.y ||
                     camAngle.z != s_tunicCamAngleWatchLast.z) {
-                    log_collect_info("[CustomEquip] pos-watch: camera angle changed (%d,%d,%d) -> (%d,%d,%d) "
-                                      "eye=(%.1f,%.1f,%.1f) center=(%.1f,%.1f,%.1f) [%d frames left]",
-                                      (int)s_tunicCamAngleWatchLast.x, (int)s_tunicCamAngleWatchLast.y, (int)s_tunicCamAngleWatchLast.z,
-                                      (int)camAngle.x, (int)camAngle.y, (int)camAngle.z,
-                                      cam->view.lookat.eye.x, cam->view.lookat.eye.y, cam->view.lookat.eye.z,
-                                      cam->view.lookat.center.x, cam->view.lookat.center.y, cam->view.lookat.center.z,
-                                      s_tunicPosWatchFrames);
                     s_tunicCamAngleWatchLast = camAngle;
                 }
                 // Keep the eye/center revert-target fresh from legitimate movement ONLY when clamp window is done
@@ -1444,11 +1409,6 @@ static void custom_equip_apply(daAlink_c* a, bool duringRebuild) {
                 const cXyz savedSwapPos = a->current.pos;
                 const s16  savedSwapAngleY = a->current.angle.y;
 
-                log_collect_info("[CustomEquip] tunic swap: begin '%s' (model=%p hat=%p face=%p hand=%p) pos=(%.1f,%.1f,%.1f)",
-                                  tunicEntry->def.name, tunicEntry->model, tunicEntry->hatModel,
-                                  tunicEntry->faceModel, tunicEntry->handModel,
-                                  savedSwapPos.x, savedSwapPos.y, savedSwapPos.z);
-
                 // Start the post-swap position watchdog (see s_tunicPosWatchFrames
                 // comment) - 300 frames (~5s at 60fps) of coverage past the swap.
                 s_tunicPosWatchFrames = 300;
@@ -1484,36 +1444,27 @@ static void custom_equip_apply(daAlink_c* a, bool duringRebuild) {
                 }
 
                 // 1. Swap Body
-                log_collect_info("[CustomEquip] tunic swap: step 1 (body)");
                 a->mpLinkModel = tunicEntry->model;
                 a->mpLinkModel->setUserArea((uintptr_t)a);
 
                 // 2. Swap Hat
-                log_collect_info("[CustomEquip] tunic swap: step 2 (hat)");
                 if (tunicEntry->hatModel != nullptr) {
                     a->mpLinkHatModel = tunicEntry->hatModel;
                     a->mpLinkHatModel->setUserArea((uintptr_t)a);
                 }
 
                 // 3. Swap Face
-                log_collect_info("[CustomEquip] tunic swap: step 3 (face)");
                 if (tunicEntry->faceModel != nullptr) {
                     a->mpLinkFaceModel = tunicEntry->faceModel;
                 }
 
                 // 4. Swap Hands
-                log_collect_info("[CustomEquip] tunic swap: step 4 (hands)");
                 if (tunicEntry->handModel != nullptr) {
                     a->mpLinkHandModel = tunicEntry->handModel;
                 }
 
                 // 5. Connect callbacks and animators
-                log_collect_info("[CustomEquip] tunic swap: step 5 (changeModelDataDirect) - "
-                                  "if this is the LAST line before a crash, it's inside vanilla's "
-                                  "changeModelDataDirect itself, not our retargeting code");
                 a->changeModelDataDirect(1);
-                log_collect_info("[CustomEquip] tunic swap: step 5 done, mpFaceBtp=%p mpFaceBtk=%p",
-                                  a->mpFaceBtp, a->mpFaceBtk);
 
                 // 5b. Sync old frame root joint translation to the new model's animation
                 // transform so transAnimeProc doesn't calculate a huge phantom delta.
@@ -1527,7 +1478,6 @@ static void custom_equip_apply(daAlink_c* a, bool duringRebuild) {
                 }
 
                 // 6. Body material shapes
-                log_collect_info("[CustomEquip] tunic swap: step 6 (body material shapes)");
                 if (a->field_0x064C != nullptr) {
                     if (a->field_0x064C->getMaterialNum() > 16) {
                         a->field_0x064C->getMaterialNodePointer(16)->getShape()->hide();
@@ -1545,7 +1495,6 @@ static void custom_equip_apply(daAlink_c* a, bool duringRebuild) {
                 }
 
                 // 7. Hand material shapes
-                log_collect_info("[CustomEquip] tunic swap: step 7 (hand material shapes)");
                 if (a->mpLinkHandModel != nullptr && a->mpLinkHandModel->getModelData() != nullptr) {
                     J3DModelData* handData = a->mpLinkHandModel->getModelData();
                     u16 numMats = handData->getMaterialNum();
@@ -1584,10 +1533,6 @@ static void custom_equip_apply(daAlink_c* a, bool duringRebuild) {
                 }
                 if (a->current.pos.x != savedSwapPos.x || a->current.pos.y != savedSwapPos.y ||
                     a->current.pos.z != savedSwapPos.z) {
-                    log_collect_info("[CustomEquip] tunic swap: pos DRIFTED during swap "
-                                      "(%.1f,%.1f,%.1f) -> (%.1f,%.1f,%.1f) - restoring",
-                                      savedSwapPos.x, savedSwapPos.y, savedSwapPos.z,
-                                      a->current.pos.x, a->current.pos.y, a->current.pos.z);
                     a->current.pos = savedSwapPos;
                     a->current.angle.y = savedSwapAngleY;
                 }
@@ -1606,12 +1551,9 @@ static void custom_equip_apply(daAlink_c* a, bool duringRebuild) {
                 // guess) - if it's already (0,0,0) here the theory is wrong and this is a
                 // no-op.
                 if (a->speed.x != 0.0f || a->speed.y != 0.0f || a->speed.z != 0.0f || a->speedF != 0.0f) {
-                    log_collect_info("[CustomEquip] tunic swap: clearing stale speed=(%.2f,%.2f,%.2f) speedF=%.2f",
-                                      a->speed.x, a->speed.y, a->speed.z, a->speedF);
                     a->speed.x = a->speed.y = a->speed.z = 0.0f;
                     a->speedF = 0.0f;
                 }
-                log_collect_info("[CustomEquip] tunic swap: complete");
             }
         } else if (s_originalLinkModel != nullptr) {
             if (a->mpLinkModel != s_originalLinkModel) {

@@ -371,16 +371,6 @@ HookAction on_da_alink_change_link_pre(ModContext*, void* args, void*, void*) {
     if (alink != nullptr) {
         s_savedLinkPos = alink->current.pos;
         s_savedLinkAngleY = alink->current.angle.y;
-        if (g_logSvc != nullptr && g_modCtx != nullptr) {
-            char buf[160];
-            std::snprintf(buf, sizeof(buf),
-                "[Shop] changeLink PRE: pos=(%.1f,%.1f,%.1f) angle=%d s_inCreate=%d",
-                alink->current.pos.x, alink->current.pos.y, alink->current.pos.z,
-                (int)alink->current.angle.y, (int)s_inAlinkCreate);
-            g_logSvc->info(g_modCtx, buf);
-        }
-    } else if (g_logSvc != nullptr && g_modCtx != nullptr) {
-        g_logSvc->info(g_modCtx, "[Shop] changeLink PRE: alink is NULL");
     }
     // The custom tunic is grafted onto a specific vanilla clothes model - force
     // that base so changeLink() builds the right skeleton + sub-models.
@@ -417,14 +407,6 @@ void on_da_alink_change_link_post(ModContext*, void* args, void*, void*) {
     // Restore Link's position AFTER the model rebuild.
     daAlink_c* alink = mods::arg<daAlink_c*>(args, 0);
     if (alink != nullptr) {
-        if (g_logSvc != nullptr && g_modCtx != nullptr) {
-            char buf[160];
-            std::snprintf(buf, sizeof(buf),
-                "[Shop] changeLink POST (before restore): pos=(%.1f,%.1f,%.1f) saved=(%.1f,%.1f,%.1f)",
-                alink->current.pos.x, alink->current.pos.y, alink->current.pos.z,
-                s_savedLinkPos.x, s_savedLinkPos.y, s_savedLinkPos.z);
-            g_logSvc->info(g_modCtx, buf);
-        }
         if (s_savedLinkPos.x != 0.0f || s_savedLinkPos.z != 0.0f) {
             const f32 dx = alink->current.pos.x - s_savedLinkPos.x;
             const f32 dy = alink->current.pos.y - s_savedLinkPos.y;
@@ -433,16 +415,6 @@ void on_da_alink_change_link_post(ModContext*, void* args, void*, void*) {
             if (distSq <= kMaxSaneRestoreDistSq) {
                 alink->current.pos = s_savedLinkPos;
                 alink->current.angle.y = s_savedLinkAngleY;
-                if (g_logSvc != nullptr && g_modCtx != nullptr) {
-                    g_logSvc->info(g_modCtx, "[Shop] changeLink POST: position RESTORED");
-                }
-            } else if (g_logSvc != nullptr && g_modCtx != nullptr) {
-                char buf[160];
-                std::snprintf(buf, sizeof(buf),
-                    "[Shop] changeLink POST: SKIPPED restore (jump=%.1f looks like a real "
-                    "stage-transition placement, not changeLink() noise)",
-                    std::sqrt(distSq));
-                g_logSvc->info(g_modCtx, buf);
             }
         }
     }

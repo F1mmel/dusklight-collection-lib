@@ -759,18 +759,6 @@ void apply_collect_shifts(dMenu_Collect2D_c* collect2D) {
     // Second page: pull heart + mirror off the grid onto their own page.
     collection_page_apply(collect2D);
 
-    static bool s_hasLoggedCollectState = false;
-    if (!s_hasLoggedCollectState) {
-        s_hasLoggedCollectState = true;
-        J2DPicture* picT00 = static_cast<J2DPicture*>(tate_00);
-        JUTTexture* tex00 = picT00 ? picT00->getTexture(0) : nullptr;
-        const ResTIMG* timg00 = tex00 ? tex00->getTexInfo() : nullptr;
-        J2DPicture* picT01 = static_cast<J2DPicture*>(tate_01);
-        JUTTexture* tex01 = picT01 ? picT01->getTexture(0) : nullptr;
-        const ResTIMG* timg01 = tex01 ? tex01->getTexInfo() : nullptr;
-        J2DPane* tate_gm_pane = slot_frame(4, 1);
-    }
-
     update_frame_highlights(collect2D);
 
     // Consumer-recorded slot moves (collectionlib_move_slot), last so they

@@ -120,10 +120,6 @@ void collectionlib_run_slot_registration() {
     if (s_registerSlotsFn != nullptr) {
         s_registerSlotsFn();
     }
-    // Diagnostics: after the callback, which columns of each row are claimed?
-    if (g_logSvc != nullptr && g_modCtx != nullptr) {
-
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -236,8 +232,6 @@ int collectionlib_add_next_tunic_slot(const CustomEquipDef& def) {
 }
 
 void collectionlib_request_reload() {
-    if (g_logSvc != nullptr && g_modCtx != nullptr) {
-    }
     s_needReloadCollect = true;
 }
 
@@ -276,9 +270,6 @@ static void ensure_system_heap_capacity() {
                 newSysHeap->setName("ExpandedSysHeap");
                 JKRHeap::setSystemHeap(newSysHeap);
                 s_done = true;
-                if (g_logSvc != nullptr && g_modCtx != nullptr) {
-
-                }
             }
         }
     }
@@ -311,11 +302,10 @@ static void cl_item_b_texture_post(ModContext*, void* args, void*, void*) {
     }
 }
 
-ModResult collectionlib_init(const HookService* hook_svc, const LogService* log_svc,
+ModResult collectionlib_init(const HookService* hook_svc, const LogService*,
                              const SaveService* save_svc, ModContext* mod_ctx, ModError*) {
     ensure_system_heap_capacity();
     g_modCtx = mod_ctx;
-    g_logSvc = log_svc;
     g_saveSvc = save_svc;
 
     // Run the consumer's slot registration once (the screen-build code re-runs
