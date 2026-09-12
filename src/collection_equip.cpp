@@ -2,6 +2,7 @@
 #include "collection_layout.hpp"
 #include "collection_page.hpp"
 #include "collection_lib/custom_equip.hpp"
+#include <cmath>
 
 static bool s_inAlinkCreate = false;
 
@@ -396,6 +397,20 @@ HookAction on_da_alink_change_link_pre(ModContext*, void* args, void*, void*) {
     return HOOK_CONTINUE;
 }
 
+// Above this, a PRE->POST jump in current.pos is changeLink()'s own internal
+// skeleton/offset reset (what the restore exists to undo) - a few units at
+// most. On some stage transitions that DON'T go through a full daAlink_c::create()
+// (s_inAlinkCreate stays false), our forced base-clothes fix-up below can trigger
+// this same changeLink() call WHILE the room-control code is still mid-placement,
+// i.e. before it has written Link's real spawn-point position for the new area.
+// Restoring unconditionally in that case overwrites the real spawn position with
+// the stale pre-transition one, landing Link "somewhere else" after certain
+// transitions with a custom tunic equipped (PRE captured the wrong value to begin
+// with - it was already wrong before our restore ever ran). A same-room skeleton
+// offset and a cross-room teleport differ by orders of magnitude, so treat any
+// large jump as an intentional reposition and leave it alone.
+constexpr f32 kMaxSaneRestoreDistSq = 300.0f * 300.0f;
+
 void on_da_alink_change_link_post(ModContext*, void* args, void*, void*) {
     custom_equip_set_link_model_wolf(false);   // mpLinkModel is now a human model
 
@@ -411,10 +426,23 @@ void on_da_alink_change_link_post(ModContext*, void* args, void*, void*) {
             g_logSvc->info(g_modCtx, buf);
         }
         if (s_savedLinkPos.x != 0.0f || s_savedLinkPos.z != 0.0f) {
-            alink->current.pos = s_savedLinkPos;
-            alink->current.angle.y = s_savedLinkAngleY;
-            if (g_logSvc != nullptr && g_modCtx != nullptr) {
-                g_logSvc->info(g_modCtx, "[Shop] changeLink POST: position RESTORED");
+            const f32 dx = alink->current.pos.x - s_savedLinkPos.x;
+            const f32 dy = alink->current.pos.y - s_savedLinkPos.y;
+            const f32 dz = alink->current.pos.z - s_savedLinkPos.z;
+            const f32 distSq = dx * dx + dy * dy + dz * dz;
+            if (distSq <= kMaxSaneRestoreDistSq) {
+                alink->current.pos = s_savedLinkPos;
+                alink->current.angle.y = s_savedLinkAngleY;
+                if (g_logSvc != nullptr && g_modCtx != nullptr) {
+                    g_logSvc->info(g_modCtx, "[Shop] changeLink POST: position RESTORED");
+                }
+            } else if (g_logSvc != nullptr && g_modCtx != nullptr) {
+                char buf[160];
+                std::snprintf(buf, sizeof(buf),
+                    "[Shop] changeLink POST: SKIPPED restore (jump=%.1f looks like a real "
+                    "stage-transition placement, not changeLink() noise)",
+                    std::sqrt(distSq));
+                g_logSvc->info(g_modCtx, buf);
             }
         }
     }
