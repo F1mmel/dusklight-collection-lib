@@ -362,7 +362,7 @@ void on_da_alink_create_post(ModContext*, void*, void*, void*) {
 HookAction on_da_alink_change_link_pre(ModContext*, void*, void*, void*) {
     // The custom tunic is grafted onto a specific vanilla clothes model - force
     // that base so changeLink() builds the right skeleton + sub-models.
-    if (custom_equip_active(CE_TUNIC)) {
+    if (custom_equip_active(CE_TUNIC) && !s_inAlinkCreate) {
         const CustomEquipDef* td = custom_equip_get(custom_equip_active_id(CE_TUNIC));
         if (td != nullptr && dComIfGs_getSelectEquipClothes() != td->baseClothes) {
             dComIfGs_setSelectEquipClothes(td->baseClothes);
