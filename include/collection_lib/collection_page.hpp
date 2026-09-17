@@ -68,6 +68,12 @@ Element heart();
 // ('modelbgn'). The mirror's 3D model tracks the pane's centre on its own.
 Element fused_shadow();
 
+// Placeholder element for a crystal pane ('crystal'). The vanilla collection
+// layout has no crystal pane yet - until the tag points at a pane that exists,
+// the element stays invisible and occupies NO layout slot and is skipped by
+// the page cursor (the other elements don't shift for it).
+Element crystal();
+
 struct Page {
 public:
     // Pages come from a small static pool (no heap). Registration in the page

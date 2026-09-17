@@ -106,6 +106,15 @@ cl::Element cl::fused_shadow() {
     return e;
 }
 
+cl::Element cl::crystal() {
+    Element e;
+    // The vanilla collection layout has no crystal pane yet - adjust this tag
+    // once a crystal pane exists. Until then the element stays unresolved:
+    // invisible, no layout slot, skipped by the page cursor.
+    e.paneTag = MULTI_CHAR('crystal');
+    return e;
+}
+
 // --- engine helpers -----------------------------------------------------------
 
 static f32 smoothstep(f32 t) {
@@ -170,15 +179,20 @@ static int prev_navigable(const cl::Page* pg, int from) {
 // Default layout: element i of n spaced evenly around the page anchor. The
 // defaults (anchor 107/-36, spacing 122) put two elements exactly where the old
 // hardcoded page-2 had them: heart at (46,-36), fused shadow at (168,-36).
-static void element_slot(const cl::Page* pg, int i, f32& x, f32& y) {
-    const cl::Element& e = pg->mElements[i];
+// Default layout: element i of n spaced evenly around the page anchor. The
+// defaults (anchor 107/-36, spacing 122) put two elements exactly where the old
+// hardcoded page-2 had them: heart at (46,-36), fused shadow at (168,-36).
+// slotIndex/slotCount count over RESOLVED elements only - placeholders whose
+// pane never resolved must not shift the others or leave a gap in the row.
+static void element_slot(const cl::Page* pg, int slotIndex, int slotCount, const cl::Element& e,
+                         f32& x, f32& y) {
     if (e.hasPos) {
         x = e.posX;
         y = e.posY;
         return;
     }
-    const f32 n = static_cast<f32>(pg->mElementCount);
-    x = pg->mAnchorX + (static_cast<f32>(i) - 0.5f * (n - 1.0f)) * pg->mSpacing;
+    const f32 n = static_cast<f32>(slotCount);
+    x = pg->mAnchorX + (static_cast<f32>(slotIndex) - 0.5f * (n - 1.0f)) * pg->mSpacing;
     y = pg->mAnchorY;
 }
 
@@ -447,19 +461,30 @@ void collection_page_apply(dMenu_Collect2D_c* collect2D) {
         const bool pageVisible = showPage && page_near(pageNo);
         const f32 pageSlide = page_offset(pageNo);
 
+        // Only RESOLVED elements participate: an element whose pane tag never
+        // resolved (placeholder) occupies no layout slot, so the others don't
+        // shift for it and no gap is left in the row.
+        int slotCount = 0;
+        for (int i = 0; i < pg->mElementCount; i++) {
+            if (pg->mPrimaryPane[i] != nullptr) slotCount++;
+        }
+
+        int slotIndex = 0;
         for (int i = 0; i < pg->mElementCount; i++) {
             const cl::Element& e = pg->mElements[i];
             J2DPane* prim = pg->mPrimaryPane[i];
             J2DPane* foll = pg->mFollowerPane[i];
+            if (prim == nullptr) continue;   // unresolved: nothing to position
 
             f32 x, y;
-            element_slot(pg, i, x, y);
-            if (prim != nullptr) set_pane_pos(prim, x + pageSlide, y);
+            element_slot(pg, slotIndex, slotCount, e, x, y);
+            slotIndex++;
+            set_pane_pos(prim, x + pageSlide, y);
             if (foll != nullptr) set_pane_pos(foll, x + e.followerDx + pageSlide, y + e.followerDy);
 
             // hideOnMain elements are hidden on the main page (the heart);
             // everything else just sits parked off the edge.
-            if (prim != nullptr && e.hideOnMain) {
+            if (e.hideOnMain) {
                 if (pageVisible) prim->show(); else prim->hide();
             }
         }

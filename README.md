@@ -13,8 +13,9 @@ What it gives a mod:
 - Optional vanilla starter slots: **wooden sword, Ordon clothes and Ordon shield**,
   including the "shield never leaves the collection" behavior.
 - An optional **Unequip** action for equip slots.
-- A **second collection page** (Heart Piece + Mirror of Twilight) that frees up the right
-  side of the item grid for custom slots.
+- Full-screen **pages** next to the item grid via a small `cl::Page` API (R/L to
+  flip) - e.g. Heart Container + Mirror of Twilight on a second page, which
+  frees up the right side of the item grid for custom slots.
 - Widescreen layout handling and safe system-heap expansion for the menu's resources.
 
 > One library instance owns the Collection screen. Do **not** install two mods that both
@@ -187,6 +188,43 @@ Rows are 4 columns wide; when every column is taken the call returns `-1`.
 `collectionlib_move_slot` visually translates the slot's panes; the recorded move is
 re-applied on rebuilds, widescreen relayouts included. `collectionlib_add_*_slot`
 register a custom equip slot at an explicit column.
+
+## Pages (second screen)
+
+Pages are opt-in: without one, the Collection screen behaves like vanilla. Create a
+page **before** `collectionlib_init` and add elements to it:
+
+```cpp
+cl::Page* p2 = new cl::Page();
+p2->add(cl::heart());          // Heart Container ('heart_n'), owns its grid cell (6,0)
+p2->add(cl::fused_shadow());   // Mirror of Twilight ('kamen_n' + 'modelbgn' backdrop)
+```
+
+`add()` re-parents the element's pane into the page: the pane is removed from its
+current parent and appended to the page's own container (this happens when the next
+collection screen is built - before that, elements are just pane tags). From then on
+the page owns the pane's position:
+
+- **R** slides the page in from the right, **L** back to the item grid (the grid
+  fades and slides away; the Link doll stays on all pages). Every transition is
+  animated - page to page slides the outgoing page left while the incoming one
+  enters from the right.
+- Default layout: elements are spaced evenly around the page anchor
+  (`set_anchor` / `set_spacing`), so the two lines above reproduce the classic
+  second page - heart and mirror side by side, roughly screen-centred.
+- The page has its own cursor (left/right between selectable elements, down drops
+  into the item grid, walking up pops back onto the page).
+- `cl::heart()` claims the heart's vanilla grid cell (6,0): the cell is not
+  selectable on the main page while the page exists, and becomes a normal grid
+  slot again when the page is removed.
+- `cl::crystal()` is a placeholder: the vanilla layout has no crystal pane, so
+  until its tag points at a pane that exists, the element stays invisible,
+  occupies **no** layout slot (the others close the gap) and is skipped by the
+  page cursor. Adjust the tag inside `cl::crystal()` once a crystal pane exists.
+
+Custom elements: brace-initialize a `cl::Element` (pane tag + optional follower
+pane, `hideOnMain`, `claimsCell`, explicit position) and `add()` it - see
+`include/collection_lib/collection_page.hpp`.
 
 ## API overview
 
