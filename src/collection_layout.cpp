@@ -655,19 +655,23 @@ void apply_collect_shifts(dMenu_Collect2D_c* collect2D) {
     // and ordon-clothes (3,2) slots only exist with the starter-equip option.
     u8 starterSlot = (cl_column_occupied(1, 1) || cl_column_occupied(3, 1)) ? 1 : 0;
     collect2D->field_0x22d[3][0] = starterSlot;
-    collect2D->field_0x22d[4][0] = 1;
+    // The vanilla "mid" columns (ordon sword / wooden shield / kokiri tunic)
+    // are not selectable in blank-layout mode - their panes are hidden and
+    // the consumer's own slots replace them.
+    const u8 midCell = cl_vanilla_layout_hidden() ? 0 : 1;
+    collect2D->field_0x22d[4][0] = midCell;
     collect2D->field_0x22d[5][0] = 1;
     collect2D->field_0x22d[6][0] = 1;
 
     // Ordon Shield (3,1): selectable only with starter-equip on. Off + "keep
     // ordon shield" leaves it greyed and unselectable; off + no keep removes it.
     collect2D->field_0x22d[3][1] = (cl_column_occupied(1, 1) || cl_column_occupied(3, 1)) ? 1 : 0;
-    collect2D->field_0x22d[4][1] = 1;
+    collect2D->field_0x22d[4][1] = midCell;
     collect2D->field_0x22d[5][1] = 1;
     collect2D->field_0x22d[6][1] = 0;   // (auto-managed mod slots re-set their own cell below)
 
     collect2D->field_0x22d[3][2] = starterSlot;
-    collect2D->field_0x22d[4][2] = 1;
+    collect2D->field_0x22d[4][2] = midCell;
     collect2D->field_0x22d[5][2] = 1;
     collect2D->field_0x22d[6][2] = 1;
 
@@ -705,6 +709,24 @@ void apply_collect_shifts(dMenu_Collect2D_c* collect2D) {
     if (fuku_g0) fuku_g0->show();
     if (fuku_g1) fuku_g1->show();
     if (fuku_g2) fuku_g2->show();
+
+    // Blank-layout mode (collectionlib_clear_all_slots): the vanilla cells are
+    // gated off via is_collect_item_unlocked, but their frame pictures and the
+    // row connectors are shown unconditionally above - hide them as well, or
+    // the emptied layout keeps rendering orphaned frames.
+    if (cl_vanilla_layout_hidden()) {
+        J2DPane* const kBlankHide[] = {
+            ken_gm, ken_g1,
+            tate_gm, tate_g1,
+            fuku_g1, fuku_g2,
+            tunagi01, tunagi_k2,
+            tunagi04, tunagi03, tunagi_t2,
+            tunagi07, tunagi06, tunagi08, tunagi_f3,
+        };
+        for (J2DPane* p : kBlankHide) {
+            if (p != nullptr) p->hide();
+        }
+    }
 
     // Synchronize scaling across custom panes
     if (ken_n0 && slot_icon(4, 0)) slot_icon(4, 0)->scale(ken_n0->getScaleX(), ken_n0->getScaleY());

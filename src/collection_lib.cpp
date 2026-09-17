@@ -74,7 +74,10 @@ int collectionlib_clear_all_slots() {
     custom_equip_reset_registry();
     // hide every vanilla gear cell that is not re-registered afterwards
     cl_set_vanilla_layout_hidden(true);
-    collectionlib_request_reload();
+    // NOTE: no collectionlib_request_reload() here. This runs at the top of
+    // the register callback, which itself executes on every screen build - a
+    // reload request from inside it recreates the screen every build forever
+    // (delete/create loop until the menu heap dies).
     return 0;
 }
 
