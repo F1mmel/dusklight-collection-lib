@@ -7,12 +7,106 @@
 #include "d/d_lib.h"             // STControl (mpStick - the analog cursor input)
 #include "Z2AudioLib/Z2SeMgr.h"
 
-// 0 = main page (item grid), 1 = second page (heart + Mirror of Twilight).
-// s_anim eases toward it; the grid fades + slides left, heart + mirror slide in
-// from the right. The Link doll stays on BOTH pages (never moved).
-static int  s_target = 0;
-static f32  s_anim = 0.0f;
-static int  s_p2sel = 0;   // page-2 cursor: 0 = heart, 1 = mirror
+// ---------------------------------------------------------------------------
+// Page engine
+//
+// Pages are consumer-created via cl::Page (collection_lib/collection_page.hpp).
+// Everything below degrades to a no-op when no page exists: the grid keeps its
+// vanilla layout, the heart stays selectable in its grid cell and R/L do
+// nothing.
+//
+// Motion model: the pages (main grid = slot 0, first created page = slot 1,
+// ...) sit on one horizontal strip. s_strip is the eased camera position on
+// that strip; a page's on-screen offset is (pageNo - s_strip) slots, shaped by
+// smoothstep. Every R/L transition therefore slides - main<->page exactly like
+// the old hardcoded page did, and page<->page slides the outgoing page left
+// while the incoming one enters from the right.
+// ---------------------------------------------------------------------------
+
+static cl::Page* s_pages[cl::Page::kMaxPages] = {};
+static int  s_pageCount = 0;
+static int  s_target = 0;    // 0 = main grid, 1..n = page (index + 1)
+static f32  s_strip = 0.0f;  // eased camera position on the page strip
+static int  s_p2sel = -1;    // page cursor: element index within the target page
+
+// --- cl::Page -----------------------------------------------------------------
+
+alignas(8) static unsigned char s_pagePool[sizeof(cl::Page) * cl::Page::kMaxPages];
+static bool s_pagePoolUsed[cl::Page::kMaxPages] = {};
+
+void* cl::Page::operator new(std::size_t size) {
+    if (size != sizeof(cl::Page)) return nullptr;
+    for (int i = 0; i < kMaxPages; i++) {
+        if (!s_pagePoolUsed[i]) {
+            s_pagePoolUsed[i] = true;
+            return s_pagePool + i * sizeof(cl::Page);
+        }
+    }
+    return nullptr;   // pool exhausted (kMaxPages) - the caller must check
+}
+
+void cl::Page::operator delete(void* ptr) noexcept {
+    if (ptr == nullptr) return;
+    const std::size_t off = static_cast<unsigned char*>(ptr) - s_pagePool;
+    if (off % sizeof(cl::Page) == 0 && off < sizeof(s_pagePool)) {
+        s_pagePoolUsed[off / sizeof(cl::Page)] = false;
+    }
+}
+
+cl::Page::Page() {
+    if (s_pageCount < kMaxPages) {
+        s_pages[s_pageCount++] = this;
+    }
+}
+
+cl::Page::~Page() {
+    for (int i = 0; i < s_pageCount; i++) {
+        if (s_pages[i] == this) {
+            for (int j = i + 1; j < s_pageCount; j++) s_pages[j - 1] = s_pages[j];
+            s_pageCount--;
+            break;
+        }
+    }
+    collection_page_reset();   // engine may have been focused on this page
+}
+
+cl::Element* cl::Page::add(const Element& element) {
+    if (element.paneTag == 0) return nullptr;
+    if (mElementCount >= kMaxElements) return nullptr;
+    mElements[mElementCount] = element;
+    mPrimaryPane[mElementCount] = nullptr;
+    mFollowerPane[mElementCount] = nullptr;
+    return &mElements[mElementCount++];
+}
+
+cl::Element* cl::Page::add(u64 paneTag) {
+    Element e;
+    e.paneTag = paneTag;
+    return add(e);
+}
+
+cl::Element cl::heart() {
+    Element e;
+    e.paneTag = MULTI_CHAR('heart_n');
+    e.hideOnMain = true;
+    e.claimsCell = true;
+    e.cellX = 6;
+    e.cellY = 0;
+    return e;
+}
+
+cl::Element cl::fused_shadow() {
+    Element e;
+    e.paneTag = MULTI_CHAR('kamen_n');
+    e.followerTag = MULTI_CHAR('modelbgn');
+    // Backdrop plate rides up-left of the mirror pane - the offsets the old
+    // hardcoded page-2 layout was tuned to.
+    e.followerDx = -13.0f;
+    e.followerDy = -22.0f;
+    return e;
+}
+
+// --- engine helpers -----------------------------------------------------------
 
 static f32 smoothstep(f32 t) {
     if (t <= 0.0f) return 0.0f;
@@ -23,6 +117,69 @@ static f32 smoothstep(f32 t) {
 static f32 page_slide_w() {
     f32 w = mDoGph_gInf_c::getWidthF();
     return (w > 100.0f && w < 4000.0f) ? w : 640.0f;
+}
+
+// On-screen X offset of page `pageNo` for the current strip position: 0 while
+// it is the focused page, +W when parked to the right, -W when parked to the
+// left, smoothstepped in between (that shaped ease is what the old hardcoded
+// single page used).
+static f32 page_offset(int pageNo) {
+    const f32 d = static_cast<f32>(pageNo) - s_strip;
+    if (d >= 1.0f) return page_slide_w();
+    if (d <= -1.0f) return -page_slide_w();
+    if (d >= 0.0f) return smoothstep(d) * page_slide_w();
+    return -smoothstep(-d) * page_slide_w();
+}
+
+// A page is on/near the screen while its slot is within one slot of the camera.
+static bool page_near(int pageNo) {
+    const f32 d = static_cast<f32>(pageNo) - s_strip;
+    return d > -1.0f && d < 1.0f;
+}
+
+// An element may take the page cursor only when it is marked selectable AND
+// its pane actually resolved against the live screen - placeholder elements
+// (e.g. a tag that does not exist in the layout yet) must be invisible to the
+// navigation, otherwise the cursor would focus an empty slot.
+static bool navigable(const cl::Page* pg, int i) {
+    return pg->mElements[i].selectable && pg->mPrimaryPane[i] != nullptr;
+}
+
+static int first_navigable(const cl::Page* pg) {
+    if (pg == nullptr) return -1;
+    for (int i = 0; i < pg->mElementCount; i++) {
+        if (navigable(pg, i)) return i;
+    }
+    return -1;
+}
+
+static int next_navigable(const cl::Page* pg, int from) {
+    for (int i = from + 1; i < pg->mElementCount; i++) {
+        if (navigable(pg, i)) return i;
+    }
+    return -1;
+}
+
+static int prev_navigable(const cl::Page* pg, int from) {
+    for (int i = from - 1; i >= 0; i--) {
+        if (navigable(pg, i)) return i;
+    }
+    return -1;
+}
+
+// Default layout: element i of n spaced evenly around the page anchor. The
+// defaults (anchor 107/-36, spacing 122) put two elements exactly where the old
+// hardcoded page-2 had them: heart at (46,-36), fused shadow at (168,-36).
+static void element_slot(const cl::Page* pg, int i, f32& x, f32& y) {
+    const cl::Element& e = pg->mElements[i];
+    if (e.hasPos) {
+        x = e.posX;
+        y = e.posY;
+        return;
+    }
+    const f32 n = static_cast<f32>(pg->mElementCount);
+    x = pg->mAnchorX + (static_cast<f32>(i) - 0.5f * (n - 1.0f)) * pg->mSpacing;
+    y = pg->mAnchorY;
 }
 
 // Every pane that belongs to the item grid (containers - child icons/pics ride
@@ -59,10 +216,36 @@ static void fade_grid(J2DScreen* s, u8 a) {
     }
 }
 
+// --- engine entry points ------------------------------------------------------
+
+// Resets only the ANIMATION state (menu always reopens on the main page). The
+// pane references are deliberately KEPT: on TARGET_PC menuCollectWide() runs
+// inside dMenu_Collect2D_c::_create, which means the first sync has already
+// happened by the time the create-post hook resets - clearing refs here would
+// leave the pages pane-less (update_screen_bases skips re-syncing because the
+// screen pointer hasn't changed). Stale refs can't happen: teardown() drops
+// them before the screen is deleted, and the incremental sync repairs
+// everything else.
 void collection_page_reset() {
     s_target = 0;
-    s_anim = 0.0f;
-    s_p2sel = 0;
+    s_strip = 0.0f;
+    s_p2sel = -1;
+}
+
+// The menu's screen is being deleted (or the mod is shutting down): drop every
+// pane reference. The pages themselves (tags, layout) survive and re-resolve
+// on the next screen build.
+void collection_page_teardown() {
+    collection_page_reset();
+    for (int k = 0; k < s_pageCount; k++) {
+        cl::Page* pg = s_pages[k];
+        pg->mRootPane = nullptr;
+        pg->mScreen = nullptr;
+        for (int i = 0; i < cl::Page::kMaxElements; i++) {
+            pg->mPrimaryPane[i] = nullptr;
+            pg->mFollowerPane[i] = nullptr;
+        }
+    }
 }
 
 void collection_page_update() {
@@ -71,32 +254,107 @@ void collection_page_update() {
         return;
     }
     const f32 tgt = static_cast<f32>(s_target);
-    s_anim += (tgt - s_anim) * 0.30f;
-    if (s_anim < 0.0004f) s_anim = 0.0f;
-    if (s_anim > 0.9996f) s_anim = 1.0f;
+    s_strip += (tgt - s_strip) * 0.30f;
+    if (tgt - s_strip < 0.0004f && s_strip - tgt < 0.0004f) s_strip = tgt;
 }
 
 bool collection_page_active() {
-    return s_target != 0 || s_anim > 0.0f;
+    return s_target != 0 || s_strip > 0.0f;
 }
 
 bool collection_page_p2_focused() {
-    return s_target == 1 && s_p2sel >= 0;
+    return s_target >= 1 && s_p2sel >= 0;
+}
+
+f32 collection_page_grid_dx() {
+    // The main grid slides one slot left at most, however many pages exist.
+    const f32 t = (s_strip < 1.0f) ? s_strip : 1.0f;
+    return -smoothstep(t) * page_slide_w();
+}
+
+bool collection_page_claims_cell(u8 x, u8 y) {
+    for (int k = 0; k < s_pageCount; k++) {
+        const cl::Page* pg = s_pages[k];
+        for (int i = 0; i < pg->mElementCount; i++) {
+            const cl::Element& e = pg->mElements[i];
+            if (e.claimsCell && e.cellX == x && e.cellY == y) return true;
+        }
+    }
+    return false;
+}
+
+// Creates (once per screen) the page's pass-through container pane under the
+// ORIGINAL parent of `pane`, then re-parents `pane` into it - appendChild
+// (JSUPtrList::append) removes the pane from its previous parent's child list
+// first, so the vanilla tree stays intact.
+static void page_attach(cl::Page* pg, J2DPane* pane, int k) {
+    if (pg->mRootPane == nullptr) {
+        J2DPane* host = pane->getParentPane();
+        if (host == nullptr) return;   // cannot host - retried on the next sync
+
+        pg->mRootTag = 0x636C506700ULL + static_cast<u64>(k);   // 'clPg' + page index
+        JGeometry::TBox2<f32> empty;
+        empty.set(0.0f, 0.0f, 0.0f, 0.0f);
+        J2DPane* root = JKR_NEW J2DPane(host, true, pg->mRootTag, empty);
+        if (root == nullptr) return;
+        root->setBasePosition(J2DBasePosition_0);
+        root->translate(0.0f, 0.0f);
+        pg->mRootPane = root;
+    }
+    pg->mRootPane->appendChild(pane);
+}
+
+// Incremental + idempotent: (re-)resolves and attaches whatever is still
+// missing. Safe to call every frame - a settled page costs a few pointer
+// compares per element. This is also what repairs pages whose pane tags only
+// resolve against a later screen state.
+void collection_page_sync_screen(J2DScreen* screen) {
+    if (screen == nullptr) return;
+    for (int k = 0; k < s_pageCount; k++) {
+        cl::Page* pg = s_pages[k];
+        if (pg->mScreen != screen) {
+            // A screen the page hasn't seen: its old panes are gone.
+            pg->mRootPane = nullptr;
+            for (int i = 0; i < cl::Page::kMaxElements; i++) {
+                pg->mPrimaryPane[i] = nullptr;
+                pg->mFollowerPane[i] = nullptr;
+            }
+            pg->mScreen = screen;
+        }
+
+        for (int i = 0; i < pg->mElementCount; i++) {
+            const cl::Element& e = pg->mElements[i];
+            if (pg->mPrimaryPane[i] == nullptr && e.paneTag != 0) {
+                J2DPane* pane = screen->search(e.paneTag);
+                if (pane != nullptr) {
+                    page_attach(pg, pane, k);
+                    pg->mPrimaryPane[i] = pane;
+                }
+            }
+            if (pg->mFollowerPane[i] == nullptr && e.followerTag != 0) {
+                J2DPane* pane = screen->search(e.followerTag);
+                if (pane != nullptr) {
+                    page_attach(pg, pane, k);
+                    pg->mFollowerPane[i] = pane;
+                }
+            }
+        }
+    }
 }
 
 void collection_page_handle_input(dMenu_Collect2D_c* collect2D) {
-    if (!collect2D) return;
+    if (collect2D == nullptr || s_pageCount == 0) return;
 
     // --- R / L page toggle ---
     const int prevPage = s_target;
     if (mDoCPd_c::getTrigR(PAD_1)) {
-        s_target = 1;
+        if (s_target < s_pageCount) s_target++;
     } else if (mDoCPd_c::getTrigL(PAD_1)) {
-        s_target = 0;
+        if (s_target > 0) s_target--;
     }
     if (s_target != prevPage) {
-        if (s_target == 1) {
-            s_p2sel = 0;   // arrive focused on the heart
+        if (s_target >= 1) {
+            s_p2sel = first_navigable(s_pages[s_target - 1]);
         } else {
             s_p2sel = -1;
         }
@@ -104,15 +362,18 @@ void collection_page_handle_input(dMenu_Collect2D_c* collect2D) {
         Z2GetAudioMgr()->seStart(Z2SE_SY_MENU_CHANGE_WINDOW, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
     }
 
-    // --- Page 2: heart / mirror navigation ---
-    // ONLY while a heart/mirror cell is focused (s_p2sel >= 0). Once dropped into
+    // --- On-page element navigation ---
+    // ONLY while a page element is focused (s_p2sel >= 0). Once dropped into
     // the grid (s_p2sel < 0) we must NOT touch mpStick - STControl::check*Trigger
     // latches a repeat-delay, so reading it here would starve the vanilla
     // cursorMove() and make grid nav stutter. on_wait_proc_pre lets wait_proc run
-    // in that state (collection_page_grid_nav_active()), and the "walked up out of
-    // the collection items into the hidden grid -> back to heart" pop is handled
-    // in collection_page_apply.
-    if (s_target == 1 && s_anim > 0.5f && s_p2sel >= 0) {
+    // in that state (collection_page_p2_focused() == false), and the "walked up
+    // out of the collection items onto the page" pop is handled in
+    // collection_page_apply.
+    const bool onTarget = s_target >= 1 &&
+                          s_strip - static_cast<f32>(s_target) < 0.5f &&
+                          static_cast<f32>(s_target) - s_strip < 0.5f;
+    if (onTarget && s_p2sel >= 0) {
         const int prevSel = s_p2sel;
         bool right = dMw_RIGHT_TRIGGER() != 0;
         bool left  = dMw_LEFT_TRIGGER() != 0;
@@ -123,6 +384,8 @@ void collection_page_handle_input(dMenu_Collect2D_c* collect2D) {
             if (collect2D->mpStick->checkLeftTrigger())  left  = true;
             if (collect2D->mpStick->checkDownTrigger())  down  = true;
         }
+
+        const cl::Page* pg = s_pages[s_target - 1];
 
         // Page switching is L/R shoulder ONLY - LEFT/DOWN here drops the selection
         // into the grid slots below (never a page flip).
@@ -135,12 +398,16 @@ void collection_page_handle_input(dMenu_Collect2D_c* collect2D) {
             Z2GetAudioMgr()->seStart(Z2SE_SY_CURSOR_ITEM, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
         };
 
-        if (s_p2sel == 0) {            // Heart focused
-            if (right)               s_p2sel = 1;
-            else if (left || down)  { drop_to_grid(); return; }
-        } else {                       // Mirror focused
-            if (left)                s_p2sel = 0;
-            else if (down)          { drop_to_grid(); return; }
+        if (right) {
+            const int nxt = next_navigable(pg, s_p2sel);
+            if (nxt >= 0) s_p2sel = nxt;
+        } else if (left) {
+            const int prv = prev_navigable(pg, s_p2sel);
+            if (prv >= 0) s_p2sel = prv;
+            else { drop_to_grid(); return; }
+        } else if (down) {
+            drop_to_grid();
+            return;
         }
 
         if (s_p2sel != prevSel) {
@@ -149,66 +416,98 @@ void collection_page_handle_input(dMenu_Collect2D_c* collect2D) {
     }
 }
 
-f32 collection_page_grid_dx() {
-    return -smoothstep(s_anim) * page_slide_w();
-}
-
 void collection_page_apply(dMenu_Collect2D_c* collect2D) {
-    if (!collect2D || !collect2D->mpScreen) return;
+    if (collect2D == nullptr || collect2D->mpScreen == nullptr || s_pageCount == 0) return;
     J2DScreen* screen = collect2D->mpScreen;
 
-    J2DPane* heart   = screen->search(MULTI_CHAR('heart_n'));
-    J2DPane* kamen   = screen->search(MULTI_CHAR('kamen_n'));
-    J2DPane* modelbg = screen->search(MULTI_CHAR('modelbgn'));
+    // Self-healing: incremental sync repairs pages whose panes haven't been
+    // resolved/attached yet. Settled pages cost a few pointer compares.
+    {
+        JKRExpHeap* heap = collect2D->mpHeap;
+        JKRHeap* oldHeap = (heap != nullptr) ? mDoExt_setCurrentHeap(heap) : nullptr;
+        collection_page_sync_screen(screen);
+        if (oldHeap != nullptr) {
+            mDoExt_setCurrentHeap(oldHeap);
+        }
+    }
 
-    const f32 p = smoothstep(s_anim);
-    const f32 W = page_slide_w();
-    const f32 slideIn = (1.0f - p) * W;      // p=0 -> off-screen right; p=1 -> at target
-    const bool showP2 = p > 0.001f;
+    const f32 p = smoothstep((s_strip < 1.0f) ? s_strip : 1.0f);
+    const bool showPage = p > 0.001f;
+    const f32 dTgt = static_cast<f32>(s_target) - s_strip;
+    const bool onTargetPage = dTgt > -1.0f && dTgt < 1.0f;
 
-    // Grid fades to nothing over the first 60% of the slide.
-    const f32 fadeT = smoothstep(s_anim < 0.6f ? s_anim / 0.6f : 1.0f);
+    // Grid fades to nothing over the first 60% of the slide away from the main
+    // grid; it stays gone while browsing deeper pages.
+    const f32 fadeT = smoothstep(p < 0.6f ? p / 0.6f : 1.0f);
     fade_grid(screen, static_cast<u8>(255.0f * (1.0f - fadeT)));
 
-    // Heart + Mirror of Twilight live only on page 2. Off page 2 they sit off the
-    // right edge (and the heart is hidden). Positions tuned on device.
-    if (heart)   set_pane_pos(heart,     46.0f + slideIn, -36.0f);
-    if (kamen)   set_pane_pos(kamen,   168.0f + slideIn, -36.0f);
-    if (modelbg) set_pane_pos(modelbg,  155.0f + slideIn, -58.0f);
-    if (heart) { if (showP2) heart->show(); else heart->hide(); }
-    // The 3D mirror model tracks kamen_n's centre, so it follows the pane.
+    for (int k = 0; k < s_pageCount; k++) {
+        cl::Page* pg = s_pages[k];
+        const int pageNo = k + 1;
+        const bool pageVisible = showPage && page_near(pageNo);
+        const f32 pageSlide = page_offset(pageNo);
 
-    if (showP2 && s_p2sel >= 0) {
+        for (int i = 0; i < pg->mElementCount; i++) {
+            const cl::Element& e = pg->mElements[i];
+            J2DPane* prim = pg->mPrimaryPane[i];
+            J2DPane* foll = pg->mFollowerPane[i];
+
+            f32 x, y;
+            element_slot(pg, i, x, y);
+            if (prim != nullptr) set_pane_pos(prim, x + pageSlide, y);
+            if (foll != nullptr) set_pane_pos(foll, x + e.followerDx + pageSlide, y + e.followerDy);
+
+            // hideOnMain elements are hidden on the main page (the heart);
+            // everything else just sits parked off the edge.
+            if (prim != nullptr && e.hideOnMain) {
+                if (pageVisible) prim->show(); else prim->hide();
+            }
+        }
+
+        // Claimed grid cells are not selectable while their page exists - the
+        // element lives on the page instead.
+        for (int i = 0; i < pg->mElementCount; i++) {
+            const cl::Element& e = pg->mElements[i];
+            if (!e.claimsCell || slot_at(e.cellX, e.cellY) != nullptr) continue;
+            collect2D->field_0x22d[e.cellX][e.cellY] = 0;
+            if (!pageVisible && collect2D->mCursorX == e.cellX && collect2D->mCursorY == e.cellY) {
+                if (e.cellX > 0) collect2D->mCursorX = static_cast<u8>(e.cellX - 1);
+            }
+        }
+    }
+
+    if (showPage && s_target >= 1 && s_p2sel >= 0) {
         collect2D->setItemNameStringNull();
 
-        // Draw the selection rect on the focused page-2 cell.
-        if (collect2D->mpDrawCursor) {
-            J2DPane* sel = (s_p2sel == 0) ? heart : kamen;
-            if (sel) {
+        // Draw the selection rect on the focused page element.
+        const cl::Page* pg = s_pages[s_target - 1];
+        if (collect2D->mpDrawCursor && pg != nullptr && s_p2sel < pg->mElementCount) {
+            J2DPane* sel = pg->mPrimaryPane[s_p2sel];
+            if (sel != nullptr) {
                 collect2D->mpDrawCursor->setAlphaRate(1.0f);
                 collect2D->mpDrawCursor->setPos(sel->getTranslateX(), sel->getTranslateY(), sel, false);
                 collect2D->mpDrawCursor->setParam(1.0f, 1.0f, 0.1f, 0.7f, 0.7f);
             }
         }
-    } else if (showP2 && s_p2sel < 0 && collect2D->mCursorY <= 2) {
+    } else if (showPage && s_target >= 1 && s_p2sel < 0 && onTargetPage && collect2D->mCursorY <= 2) {
         // In the grid section, vanilla cursorMove walked the cursor up out of the
         // collection items into the (hidden, slid-off) equipment rows -> pop back
-        // up to the heart.
-        s_p2sel = 0;
-        collect2D->mCursorX = 6;
-        collect2D->mCursorY = 0;
-        Z2GetAudioMgr()->seStart(Z2SE_SY_CURSOR_ITEM, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
-    }
-
-
-    // The heart cell (6,0) isn't a vanilla-cursor target on the main page.
-    if (!slot_at(6, 0)) {
-        collect2D->field_0x22d[6][0] = 0;
-        if (!showP2 && collect2D->mCursorX == 6 && collect2D->mCursorY == 0) {
-            collect2D->mCursorX = 5;
+        // onto the page's first navigable element.
+        cl::Page* pg = s_pages[s_target - 1];
+        const int first = first_navigable(pg);
+        if (first >= 0) {
+            s_p2sel = first;
+            const cl::Element& e = pg->mElements[first];
+            if (e.claimsCell) {
+                collect2D->mCursorX = e.cellX;
+                collect2D->mCursorY = e.cellY;
+            } else {
+                collect2D->mCursorX = 6;
+                collect2D->mCursorY = 0;
+            }
+            Z2GetAudioMgr()->seStart(Z2SE_SY_CURSOR_ITEM, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
         }
     }
 
     // The Link doll (linki_n) is deliberately left alone - it stays on both pages.
 }
-

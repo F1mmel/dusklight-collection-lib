@@ -329,6 +329,12 @@ void update_screen_bases(J2DScreen* screen, JKRExpHeap* heap) {
             }
         }
 
+        // Pages: create the page container panes and resolve the consumer's
+        // element pane tags against this fresh screen (this is where add()
+        // physically re-parents the panes into their page). No-op without
+        // pages. Allocated from the menu heap like everything else above.
+        collection_page_sync_screen(screen);
+
         if (oldHeap != nullptr) {
             mDoExt_setCurrentHeap(oldHeap);
         }
@@ -934,7 +940,7 @@ HookAction on_menu_collect_2d_delete_pre(ModContext*, void*, void*, void*) {
     s_capturedScreen = nullptr;
     s_cachedScreen = nullptr;
     slot_registry_clear();   // drops the mod slots' pane pointers before the screen dies
-    collection_page_reset();
+    collection_page_teardown();   // the screen dies - the pages must forget its panes
     return HOOK_CONTINUE;
 }
 

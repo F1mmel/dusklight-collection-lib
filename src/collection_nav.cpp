@@ -113,7 +113,10 @@ HookAction on_cursor_pos_set_pre(ModContext*, void* args, void*, void*) {
         for (u8 x = 0; x < 7; x++) {
             J2DPane* pane = get_target_pane(collect2D, x, y);
             if (pane) {
-                bool skipScale = (x == 0 && y == 0) || (x == 6 && y == 0 && !slot_at(6, 0));
+                // (6,0) only skips the item scale while a PAGE owns the heart -
+                // without a page it is a normal selectable grid item.
+                bool skipScale = (x == 0 && y == 0) ||
+                                 (x == 6 && y == 0 && !slot_at(6, 0) && collection_page_claims_cell(6, 0));
                 if (!skipScale) {
                     if (y == 5) {
                         if (x == curX && y == curY) {
@@ -152,7 +155,7 @@ HookAction on_cursor_pos_set_pre(ModContext*, void* args, void*, void*) {
 
     if (curY == 5) {
         collect2D->mpDrawCursor->setParam(1.1f, 0.85f, 0.05f, 0.5f, 0.5f);
-    } else if (curX == 6 && curY == 0 && !slot_at(6, 0)) {
+    } else if (curX == 6 && curY == 0 && !slot_at(6, 0) && collection_page_claims_cell(6, 0)) {
         collect2D->mpDrawCursor->setParam(0.6f, 0.85f, 0.03f, 0.6f, 0.6f);
     } else {
         collect2D->mpDrawCursor->setParam(1.0f, 1.0f, 0.1f, 0.7f, 0.7f);
@@ -342,10 +345,15 @@ HookAction on_pointer_wait_pre(ModContext*, void* args, void*, void*) {
     if (J2DPane* heart = pw_heart(args)) {
         s_heartBoundsSave = heart->mBounds;
         s_heartBoundsSaved = true;
-        if (!collection_page_active()) {
-            heart->mBounds.set(-99999.0f, -99999.0f, -99990.0f, -99990.0f);
-        } else {
-            heart->mBounds.set(-24.0f, -28.0f, 24.0f, 28.0f);
+        // Only while a PAGE owns the heart is it parked off the grid. Without a
+        // page it is a normal selectable grid item at (6,0) - keep its real
+        // hit-box so the cursor/mouse can reach it.
+        if (collection_page_claims_cell(6, 0)) {
+            if (!collection_page_active()) {
+                heart->mBounds.set(-99999.0f, -99999.0f, -99990.0f, -99990.0f);
+            } else {
+                heart->mBounds.set(-24.0f, -28.0f, 24.0f, 28.0f);
+            }
         }
     }
 

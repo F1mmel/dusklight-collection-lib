@@ -405,7 +405,7 @@ void collectionlib_update() {
 }
 
 void collectionlib_shutdown() {
-    collection_page_reset();
+    collection_page_teardown();
     custom_equip_shutdown();
     slot_registry_clear();   // drops the mod slots' pane pointers
     s_picTunagiKen2 = nullptr;

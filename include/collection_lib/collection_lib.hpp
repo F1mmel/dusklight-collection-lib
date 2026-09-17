@@ -6,8 +6,9 @@
 // Embeds into a mod at BUILD time (static library): adds custom equippable
 // swords / shields / tunics to the pause Collection screen, optionally the
 // vanilla starter gear (wooden sword / Ordon clothes / Ordon shield), an
-// "Unequip" action, a second collection page (Heart Piece + Mirror of
-// Twilight), widescreen layout shifts and full cursor/navigation support for
+// "Unequip" action, additional full-screen pages via the cl::Page API (see
+// collection_page.hpp - e.g. Heart Container + Mirror of Twilight on a second
+// page), widescreen layout shifts and full cursor/navigation support for
 // every registered slot.
 //
 // Typical consumer:
@@ -18,6 +19,7 @@
 //     ... collectionlib_update() every frame, collectionlib_shutdown() on teardown.
 
 #include "collection_common.hpp"
+#include "collection_page.hpp"
 #include "custom_equip.hpp"
 
 #include "mods/svc/save.h"

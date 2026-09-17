@@ -1,21 +1,21 @@
 #pragma once
 
 #include "collection_lib/collection_common.hpp"
+#include "collection_lib/collection_page.hpp"
 
-// Second collection page: press R to slide from the item grid to a page that
-// shows only the Heart-Piece container and the Mirror of Twilight (the "fused
-// shadow" model), press L to slide back. Moving both off the main page frees up
-// its right side.
-//
-// The animation is a horizontal two-layer slide driven by `s_anim` (0 = main
-// page, 1 = second page). Layer A = the grid + connectors + Link doll (slides
-// left). Layer B = heart + mirror + model background (slides in from the right).
+// Page engine. Pages (cl::Page, see collection_lib/collection_page.hpp) are
+// consumer-created full-screen layers next to the main item grid. This header
+// is the internal surface the rest of the menu code talks to - everything
+// degrades to a no-op when the consumer has not created any page (the second
+// page only exists if someone builds it via the API).
 
-void collection_page_reset();                         // clear state (menu open/close)
+void collection_page_reset();                         // clear animation state (menu open/close)
+void collection_page_teardown();                      // menu deleted / shutdown: drop pane refs
 void collection_page_update();                        // advance the animation, once per frame
 void collection_page_handle_input(dMenu_Collect2D_c*);// R / L page toggle (from wait_proc pre)
 bool collection_page_active();                        // true while not fully on the main page
-bool collection_page_p2_focused();                    // true if on P2 and focusing Heart/Mirror
+bool collection_page_p2_focused();                    // true if on a page and focusing an element
 f32  collection_page_grid_dx();                       // X offset to add to the grid's baseX
-void collection_page_apply(dMenu_Collect2D_c*);       // reposition heart / mirror / doll
-
+void collection_page_apply(dMenu_Collect2D_c*);       // position / show / hide page elements
+bool collection_page_claims_cell(u8 x, u8 y);         // a page element owns this main-grid cell
+void collection_page_sync_screen(J2DScreen* screen);  // (re)create page roots, resolve pane tags
