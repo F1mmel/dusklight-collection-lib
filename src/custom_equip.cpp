@@ -38,7 +38,7 @@ DEFINE_HOOK(&daAlink_c::shadowDraw, CeAlinkShadowDrawHook);       // swap vanill
 
 namespace {
 
-constexpr int kMaxDefs = 12;
+constexpr int kMaxDefs = 32;
 
 struct Entry {
     CustomEquipDef def;
@@ -48,6 +48,7 @@ struct Entry {
     // model
     ResourceBuffer arcBuf  = RESOURCE_BUFFER_INIT;
     JKRArchive*    arc     = nullptr;
+    bool           arcIsGame = false; // arc belongs to the game's res system (never unmount/free)
     J3DModel*      model       = nullptr; // Body (or sword/shield)
     J3DModel*      sheathModel = nullptr; // Sword sheath
     J3DModel*      hatModel    = nullptr; // Head / Hat
@@ -349,7 +350,7 @@ static J3DModel* load_single_bmd(void* bmd, u32 diffFlags = 0x11000084) {
 }
 
 static void note_load_fail(Entry& e) {
-    if (e.arc != nullptr) { JKRUnmountArchive(e.arc); e.arc = nullptr; }
+    if (e.arc != nullptr && !e.arcIsGame) { JKRUnmountArchive(e.arc); e.arc = nullptr; }
     e.model = e.sheathModel = e.hatModel = e.faceModel = e.handModel = nullptr;
     if (++e.tryCount >= 30) {
         e.tried = true;
@@ -362,16 +363,39 @@ void load_model(Entry& e) {
     const ResourceService* res = cl_get_resource_service();
     if (res == nullptr || g_modCtx == nullptr) return;
 
-    if (e.arcBuf.data == nullptr) {
+    if (e.arcBuf.data == nullptr && e.arc == nullptr) {
         res->load(g_modCtx, e.def.modelArc, &e.arcBuf);
-        if (e.arcBuf.data == nullptr) { note_load_fail(e); return; }
     }
 
     JKRHeap* persistHeap = JKRHeap::getRootHeap();
     if (persistHeap == nullptr) persistHeap = static_cast<JKRHeap*>(mDoExt_getGameHeap());
 
-    if (e.arc == nullptr) {
-        e.arc = JKRArchive::mount(e.arcBuf.data, persistHeap, JKRArchive::MOUNT_DIRECTION_HEAD);
+    if (e.arcBuf.data != nullptr) {
+        if (e.arc == nullptr) {
+            e.arc = JKRArchive::mount(e.arcBuf.data, persistHeap, JKRArchive::MOUNT_DIRECTION_HEAD);
+            if (e.arc == nullptr) { note_load_fail(e); return; }
+        }
+    } else if (e.arc == nullptr) {
+        // Game-data fallback: the archive is not in the mod's res/ - treat
+        // `modelArc` as the name of one of the game's OWN object archives
+        // (directory + extension stripped, e.g. "AlLink.arc" -> "AlLink") and
+        // resolve resources from the game's mounted archive instead. That
+        // archive is owned by the game: never unmount or free it here.
+        char arcName[16] = {};
+        const char* base = e.def.modelArc;
+        for (const char* c = e.def.modelArc; *c != '\0'; c++) {
+            if (*c == '/') base = c + 1;
+        }
+        for (u32 i = 0; base[i] != '\0' && base[i] != '.' && i + 1 < sizeof(arcName); i++) {
+            arcName[i] = base[i];
+        }
+        if (arcName[0] != '\0') {
+            dRes_info_c* info = dComIfG_getObjectResInfo(arcName);
+            if (info != nullptr) {
+                e.arc = info->getArchive();
+                e.arcIsGame = (e.arc != nullptr);
+            }
+        }
         if (e.arc == nullptr) { note_load_fail(e); return; }
     }
 
@@ -892,6 +916,7 @@ int custom_equip_register(const CustomEquipDef& def) {
     // Preserve any already-loaded icon/model for this slot id.
     ResourceBuffer ib = s_entries[id].iconBuf; ResTIMG* it = s_entries[id].iconTex;
     ResourceBuffer ab = s_entries[id].arcBuf;  JKRArchive* ar = s_entries[id].arc;
+    bool ag = s_entries[id].arcIsGame;
     J3DModel* md = s_entries[id].model;
     J3DModel* sm = s_entries[id].sheathModel;
     J3DModel* hm = s_entries[id].hatModel;
@@ -914,6 +939,7 @@ int custom_equip_register(const CustomEquipDef& def) {
     s_entries[id].def = resolved;
     s_entries[id].iconBuf = ib; s_entries[id].iconTex = it;
     s_entries[id].arcBuf = ab;  s_entries[id].arc = ar;
+    s_entries[id].arcIsGame = ag;
     s_entries[id].model = md;
     s_entries[id].sheathModel = sm;
     s_entries[id].hatModel = hm;
@@ -1111,6 +1137,23 @@ ResTIMG* custom_equip_icon(int id) {
     if (id < 0 || id >= s_count) return nullptr;
     Entry& e = s_entries[id];
     if (e.iconTex != nullptr) return e.iconTex;
+
+    // Icon by file id from the collection screen's own resource archive
+    // (res/Layout/clctres.arc - already mounted by the game, owned by it).
+    if (e.def.iconArcFileId != 0xFFFF) {
+        JKRArchive* arc = dComIfGp_getCollectResArchive();
+        if (arc != nullptr) {
+            void* res = arc->getResource(static_cast<u16>(e.def.iconArcFileId));
+            if (res == nullptr) res = arc->getIdxResource(static_cast<u16>(e.def.iconArcFileId));
+            if (res != nullptr) {
+                e.iconTex = reinterpret_cast<ResTIMG*>(res);
+                e.iconTex->alphaEnabled = 1;
+                return e.iconTex;
+            }
+        }
+        return nullptr;
+    }
+
     if (e.iconBuf.data == nullptr) {
         const ResourceService* res = cl_get_resource_service();
         if (res == nullptr || g_modCtx == nullptr) return nullptr;
@@ -1767,7 +1810,7 @@ void custom_equip_shutdown() {
             res->free(g_modCtx, &e.iconBuf);   // menu-only, never held by a world model
         }
         if (!inUse) {
-            if (e.arc) JKRUnmountArchive(e.arc);
+            if (e.arc != nullptr && !e.arcIsGame) JKRUnmountArchive(e.arc);
             if (res != nullptr && g_modCtx != nullptr) res->free(g_modCtx, &e.arcBuf);
             s_entries[i] = Entry{};
         } else {

@@ -17,7 +17,10 @@ struct CustomEquipDef {
     const char* name;          // slot title (literal)
     const char* description;   // slot description (literal)
     const char* iconBti;       // res-relative, e.g. "textures/clctres/reinforced_shield.bti"
-    const char* modelArc;      // res-relative, e.g. "models/clctres/ReinforcedShield.arc"
+    const char* modelArc;      // res-relative, e.g. "models/clctres/ReinforcedShield.arc" - or
+                               //   the name of one of the game's own object archives (e.g.
+                               //   "AlLink.arc") to build on vanilla models without shipping
+                               //   them in res/ (game-data fallback)
     u32         modelFileId;   // archive file index of the BMD, e.g. 0x0003
     u32         sheathFileId = 0xFFFF; // SWORD only: archive file index of the sheath BMD (0xFFFF = none / nullptr)
 
@@ -37,6 +40,12 @@ struct CustomEquipDef {
     unsigned int padColor = 0xFFFFFFFFu;
 
     bool (*unlocked)() = nullptr;   // optional gate; nullptr = always available
+
+    // Icon as a file inside the collection screen's own resource archive
+    // (res/Layout/clctres.arc, already mounted by the game): when set (not
+    // 0xFFFF), this file id is used as the slot icon and iconBti is ignored.
+    // LAST member on purpose - keeps existing positional initializers valid.
+    u16         iconArcFileId = 0xFFFF;
 };
 
 // --- registration (called each menu-screen build; idempotent by kind+item) ---

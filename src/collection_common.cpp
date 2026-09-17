@@ -8,6 +8,11 @@ J2DScreen* s_capturedScreen = nullptr;
 dMenu_Collect2D_c* s_currentCollect2D = nullptr;
 bool s_needReloadCollect = false;
 
+// Blank-layout mode (see collection_common.hpp).
+static bool s_vanillaLayoutHidden = false;
+void cl_set_vanilla_layout_hidden(bool hidden) { s_vanillaLayoutHidden = hidden; }
+bool cl_vanilla_layout_hidden() { return s_vanillaLayoutHidden; }
+
 // Connectors (tunagi)
 J2DPicture* s_picTunagiKen2 = nullptr;
 J2DPicture* s_picTunagiTate2 = nullptr;

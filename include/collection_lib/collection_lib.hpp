@@ -77,6 +77,12 @@ inline int collectionlib_register_slot(const CustomEquipDef& def) {
     return custom_equip_register(def);
 }
 
+// Wipe the entire collection layout: unclaims every vanilla-wired slot, clears
+// every registered custom slot, hides all vanilla gear cells (blank-layout mode)
+// and requests a screen rebuild. Call it at the top of your register callback,
+// then register only the slots you actually want.
+int collectionlib_clear_all_slots();
+
 // Number of registered slots.
 inline int collectionlib_slot_count() {
     return custom_equip_count();

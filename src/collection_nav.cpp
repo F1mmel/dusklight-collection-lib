@@ -534,6 +534,14 @@ HookAction on_set_item_name_string_pre(ModContext*, void* args, void*, void*) {
     u8 y = mods::arg<u8>(args, 2);
     if (!collect2D || !collect2D->mpScreen) return HOOK_CONTINUE;
 
+    // While ANY page is the target the item grid is slid out/invisible - name
+    // strings for its cells would only flicker (the cursor can still wander
+    // the hidden cells after a drop). Force every setter to Null.
+    if (collection_page_on_page()) {
+        collect2D->setItemNameStringNull();
+        return HOOK_SKIP_ORIGINAL;
+    }
+
     const SlotSpec* slot = slot_at(x, y);
     if ((x >= 3 && x <= 6 && y <= 2) || (slot != nullptr && slot->autoLayout.on)) {
         if (!is_collect_item_unlocked(x, y)) {

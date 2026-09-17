@@ -58,6 +58,13 @@ struct CollectionVanillaSlotDef {
     ResTIMG* icon = nullptr;             // icon texture (required for built cells)
 };
 
+// --- blank-layout mode ---------------------------------------------------------
+// When set, every vanilla collection cell is hidden and only registered mod slots
+// (plus re-registered vanilla-wired cells) decide what exists. Used by
+// collectionlib_clear_all_slots(); pass false to bring the vanilla cells back.
+void cl_set_vanilla_layout_hidden(bool hidden);
+bool cl_vanilla_layout_hidden();
+
 int collectionlib_add_vanilla_slot(u8 row, const CollectionVanillaSlotDef& def);
 
 // Is the column claimed by a VANILLA-WIRED slot? Gates the vanilla cell's
@@ -351,6 +358,8 @@ inline bool is_collect_item_unlocked(u8 x, u8 y) {
     if (const SlotSpec* modSlot = slot_at(x, y)) {
         if (modSlot->unlockFn) return modSlot->unlockFn(x, y);
     }
+    // Blank layout: mod slots own everything, vanilla cells stay hidden.
+    if (cl_vanilla_layout_hidden()) return false;
     if (y == 0) {
         u8 eqSword = custom_equip_active(CE_SWORD) ? dItemNo_NONE_e : dComIfGs_getSelectEquipSword();
         if (x == 3) {

@@ -7,6 +7,9 @@
 #include "d/d_lib.h"             // STControl (mpStick - the analog cursor input)
 #include "Z2AudioLib/Z2SeMgr.h"
 
+#include <chrono>
+#include <cmath>
+
 // ---------------------------------------------------------------------------
 // Page engine
 //
@@ -199,22 +202,23 @@ static void element_slot(const cl::Page* pg, int slotIndex, int slotCount, const
 // Every pane that belongs to the item grid (containers - child icons/pics ride
 // the parent alpha). Faded out as the grid slides so it doesn't smear over the
 // Link doll on the way off-screen.
+static const u64 kGridTags[] = {
+    MULTI_CHAR('ken_n0'),  MULTI_CHAR('ken_n1'),
+    MULTI_CHAR('tate_n0'), MULTI_CHAR('tate_n1'),
+    MULTI_CHAR('fuku_n0'), MULTI_CHAR('fuku_n1'), MULTI_CHAR('fuku_n2'),
+    MULTI_CHAR('ken_g_0'),  MULTI_CHAR('ken_g_1'),
+    MULTI_CHAR('tate_g_0'), MULTI_CHAR('tate_g_1'),
+    MULTI_CHAR('fuku_g_0'), MULTI_CHAR('fuku_g_1'), MULTI_CHAR('fuku_g_2'),
+    MULTI_CHAR('tunagi00'), MULTI_CHAR('tunagi01'), MULTI_CHAR('tunagi03'),
+    MULTI_CHAR('tunagi04'), MULTI_CHAR('tunagi06'), MULTI_CHAR('tunagi07'),
+    MULTI_CHAR('tunagi08'),
+    MULTI_CHAR('tuna_k2'), MULTI_CHAR('tuna_t2'), MULTI_CHAR('tuna_f3'),
+    MULTI_CHAR('ken_mid'), MULTI_CHAR('tate_mid'), MULTI_CHAR('fuku_ord'),
+    MULTI_CHAR('ken_gm'),  MULTI_CHAR('tate_gm'),  MULTI_CHAR('fuku_go'),
+    MULTI_CHAR('fuku_her'),
+};
+
 static void fade_grid(J2DScreen* s, u8 a) {
-    static const u64 kGridTags[] = {
-        MULTI_CHAR('ken_n0'),  MULTI_CHAR('ken_n1'),
-        MULTI_CHAR('tate_n0'), MULTI_CHAR('tate_n1'),
-        MULTI_CHAR('fuku_n0'), MULTI_CHAR('fuku_n1'), MULTI_CHAR('fuku_n2'),
-        MULTI_CHAR('ken_g_0'),  MULTI_CHAR('ken_g_1'),
-        MULTI_CHAR('tate_g_0'), MULTI_CHAR('tate_g_1'),
-        MULTI_CHAR('fuku_g_0'), MULTI_CHAR('fuku_g_1'), MULTI_CHAR('fuku_g_2'),
-        MULTI_CHAR('tunagi00'), MULTI_CHAR('tunagi01'), MULTI_CHAR('tunagi03'),
-        MULTI_CHAR('tunagi04'), MULTI_CHAR('tunagi06'), MULTI_CHAR('tunagi07'),
-        MULTI_CHAR('tunagi08'),
-        MULTI_CHAR('tuna_k2'), MULTI_CHAR('tuna_t2'), MULTI_CHAR('tuna_f3'),
-        MULTI_CHAR('ken_mid'), MULTI_CHAR('tate_mid'), MULTI_CHAR('fuku_ord'),
-        MULTI_CHAR('ken_gm'),  MULTI_CHAR('tate_gm'),  MULTI_CHAR('fuku_go'),
-        MULTI_CHAR('fuku_her'),
-    };
     for (u64 tag : kGridTags) {
         if (J2DPane* p = s->search(tag)) p->setAlpha(a);
     }
@@ -227,6 +231,40 @@ static void fade_grid(J2DScreen* s, u8 a) {
     }
     for (int i = 0; i < s_customConnectorCount; i++) {
         if (s_customConnectors[i]) s_customConnectors[i]->setAlpha(a);
+    }
+}
+
+// The grid's inner left edge in row space: the leftmost column the layout can
+// ever produce is ken_n0 at -93 (starter-gear slot off shifts the row one
+// column left), its frame reaches ~24 further - everything left of -117.5 is
+// outside the frame.
+static constexpr f32 kGridFrameLeftEdge = -117.5f;
+
+// While the grid slides, HIDE every grid pane once it passes the frame's left
+// edge - the slots (frame pictures included - alpha alone doesn't stick for
+// them) must vanish behind the frame instead of drifting across the Link
+// doll. Vanilla re-evaluates the visibility of every one of these panes each
+// frame, so they re-appear on their own when the slide brings them back
+// inside the frame.
+static void grid_mask_beyond_frame(J2DScreen* s, f32 dx) {
+    for (u64 tag : kGridTags) {
+        J2DPane* p = s->search(tag);
+        if (p != nullptr && p->getTranslateX() + dx < kGridFrameLeftEdge) p->hide();
+    }
+    for (int i = 0; i < slot_count(); i++) {
+        const SlotSpec* slot = slot_get(i);
+        if (slot && slot->autoLayout.on) {
+            if (slot->icon != nullptr && slot->icon->getTranslateX() + dx < kGridFrameLeftEdge) {
+                slot->icon->hide();
+            }
+            if (slot->frame != nullptr && slot->frame->getTranslateX() + dx < kGridFrameLeftEdge) {
+                slot->frame->hide();
+            }
+        }
+    }
+    for (int i = 0; i < s_customConnectorCount; i++) {
+        J2DPane* p = s_customConnectors[i];
+        if (p != nullptr && p->getTranslateX() + dx < kGridFrameLeftEdge) p->hide();
     }
 }
 
@@ -262,14 +300,32 @@ void collection_page_teardown() {
     }
 }
 
+// Render-rate easing for the page strip. apply() runs BOTH in the simulation
+// hooks and in the draw-phase wide hook (menuCollectWide from _draw), so the
+// strip is eased with wall-clock delta time: the animation advances every
+// rendered frame instead of stepping per simulation tick, and the speed is
+// identical at any framerate. Exponential smoothing composes across the
+// interleaved calls (the elapsed time is only ever counted once), so no
+// phase tracking is needed. Mirrors what dusk::interp does for the item
+// wheel / map, whose capture state mods cannot reach.
+static void ease_strip(f32 tgt) {
+    using clock = std::chrono::steady_clock;
+    static clock::time_point s_last = clock::now();
+    const clock::time_point now = clock::now();
+    f32 dt = std::chrono::duration<f32>(now - s_last).count();
+    s_last = now;
+    if (dt < 0.0f) dt = 0.0f;
+    if (dt > 0.1f) dt = 0.1f;
+    s_strip += (tgt - s_strip) * (1.0f - std::exp(-21.0f * dt));
+    if (tgt - s_strip < 0.0004f && s_strip - tgt < 0.0004f) s_strip = tgt;
+}
+
 void collection_page_update() {
     if (!is_collection_menu_enabled()) {
         collection_page_reset();
         return;
     }
-    const f32 tgt = static_cast<f32>(s_target);
-    s_strip += (tgt - s_strip) * 0.30f;
-    if (tgt - s_strip < 0.0004f && s_strip - tgt < 0.0004f) s_strip = tgt;
+    ease_strip(static_cast<f32>(s_target));
 }
 
 bool collection_page_active() {
@@ -278,6 +334,10 @@ bool collection_page_active() {
 
 bool collection_page_p2_focused() {
     return s_target >= 1 && s_p2sel >= 0;
+}
+
+bool collection_page_on_page() {
+    return s_target >= 1;
 }
 
 f32 collection_page_grid_dx() {
@@ -297,22 +357,33 @@ bool collection_page_claims_cell(u8 x, u8 y) {
     return false;
 }
 
-// Creates (once per screen) the page's pass-through container pane under the
-// ORIGINAL parent of `pane`, then re-parents `pane` into it - appendChild
-// (JSUPtrList::append) removes the pane from its previous parent's child list
-// first, so the vanilla tree stays intact.
-static void page_attach(cl::Page* pg, J2DPane* pane, int k) {
+// Creates (once per screen) the page's container pane and re-parents `pane`
+// into it - appendChild (JSUPtrList::append) removes the pane from its
+// previous parent's child list first, so the vanilla tree stays intact.
+//
+// The container is hosted directly under the SCREEN root: as its last child it
+// draws after every top-level group (Link doll, frame graphics), so page
+// elements are never occluded by them. The original parent's accumulated
+// translate is baked into the container so element coordinates stay in the
+// same frame the vanilla panes (and the tuned layout) live in - translation
+// only; a scaled ancestor would need matrix compensation.
+static void page_attach(cl::Page* pg, J2DPane* pane, int k, J2DScreen* screen) {
     if (pg->mRootPane == nullptr) {
-        J2DPane* host = pane->getParentPane();
-        if (host == nullptr) return;   // cannot host - retried on the next sync
+        f32 tx = 0.0f, ty = 0.0f;
+        for (J2DPane* p = pane->getParentPane();
+             p != nullptr && p != static_cast<J2DPane*>(screen);
+             p = p->getParentPane()) {
+            tx += p->getTranslateX();
+            ty += p->getTranslateY();
+        }
 
         pg->mRootTag = 0x636C506700ULL + static_cast<u64>(k);   // 'clPg' + page index
         JGeometry::TBox2<f32> empty;
         empty.set(0.0f, 0.0f, 0.0f, 0.0f);
-        J2DPane* root = JKR_NEW J2DPane(host, true, pg->mRootTag, empty);
+        J2DPane* root = JKR_NEW J2DPane(screen, true, pg->mRootTag, empty);
         if (root == nullptr) return;
         root->setBasePosition(J2DBasePosition_0);
-        root->translate(0.0f, 0.0f);
+        root->translate(tx, ty);
         pg->mRootPane = root;
     }
     pg->mRootPane->appendChild(pane);
@@ -341,14 +412,14 @@ void collection_page_sync_screen(J2DScreen* screen) {
             if (pg->mPrimaryPane[i] == nullptr && e.paneTag != 0) {
                 J2DPane* pane = screen->search(e.paneTag);
                 if (pane != nullptr) {
-                    page_attach(pg, pane, k);
+                    page_attach(pg, pane, k, screen);
                     pg->mPrimaryPane[i] = pane;
                 }
             }
             if (pg->mFollowerPane[i] == nullptr && e.followerTag != 0) {
                 J2DPane* pane = screen->search(e.followerTag);
                 if (pane != nullptr) {
-                    page_attach(pg, pane, k);
+                    page_attach(pg, pane, k, screen);
                     pg->mFollowerPane[i] = pane;
                 }
             }
@@ -370,9 +441,15 @@ void collection_page_handle_input(dMenu_Collect2D_c* collect2D) {
         if (s_target >= 1) {
             s_p2sel = first_navigable(s_pages[s_target - 1]);
         } else {
-            s_p2sel = -1;
+            s_p2sel = -1;            // s_animPage keeps pointing at the page sliding out
         }
         collect2D->setItemNameStringNull();
+        // The vanilla cursor-pulse anime is (re-)armed by the wait_proc paths
+        // we skip while a page is focused - re-arm it here so the selection
+        // cursor keeps animating on the page.
+        if (collect2D->mpDrawCursor != nullptr) {
+            collect2D->mpDrawCursor->onPlayAllAnime();
+        }
         Z2GetAudioMgr()->seStart(Z2SE_SY_MENU_CHANGE_WINDOW, NULL, 0, 0, 1.0f, 1.0f, -1.0f, -1.0f, 0);
     }
 
@@ -445,6 +522,11 @@ void collection_page_apply(dMenu_Collect2D_c* collect2D) {
         }
     }
 
+    // Render-rate easing: in the draw phase this call runs per rendered frame
+    // (menuCollectWide from _draw), so the strip - and with it every grid and
+    // page position below - advances smoothly between simulation ticks.
+    ease_strip(static_cast<f32>(s_target));
+
     const f32 p = smoothstep((s_strip < 1.0f) ? s_strip : 1.0f);
     const bool showPage = p > 0.001f;
     const f32 dTgt = static_cast<f32>(s_target) - s_strip;
@@ -454,6 +536,15 @@ void collection_page_apply(dMenu_Collect2D_c* collect2D) {
     // grid; it stays gone while browsing deeper pages.
     const f32 fadeT = smoothstep(p < 0.6f ? p / 0.6f : 1.0f);
     fade_grid(screen, static_cast<u8>(255.0f * (1.0f - fadeT)));
+
+    // While ANY page is showing, grid content that slid past the frame's left
+    // edge is hidden outright (the frame pictures included - alpha alone
+    // doesn't fully stick for them). On a page the grid is one full width
+    // left, so this hides everything; on the way back vanilla re-shows each
+    // pane as it re-enters the frame.
+    if (s_strip > 0.001f) {
+        grid_mask_beyond_frame(screen, collection_page_grid_dx());
+    }
 
     for (int k = 0; k < s_pageCount; k++) {
         cl::Page* pg = s_pages[k];

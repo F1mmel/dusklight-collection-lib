@@ -67,6 +67,17 @@ static int cl_add_vanilla_slot(u8 row, const CollectionVanillaSlotDef& def) {
 
 int collectionlib_add_vanilla_slot(u8 row, const CollectionVanillaSlotDef& def) { return cl_add_vanilla_slot(row, def); }
 
+int collectionlib_clear_all_slots() {
+    // vanilla-wired claims (ordon shield / clothes / wooden sword cells)
+    s_vanillaSlotCount = 0;
+    // registered custom slots (swords / shields / tunics)
+    custom_equip_reset_registry();
+    // hide every vanilla gear cell that is not re-registered afterwards
+    cl_set_vanilla_layout_hidden(true);
+    collectionlib_request_reload();
+    return 0;
+}
+
 int cl_vanilla_slot_count() { return s_vanillaSlotCount; }
 const CollectionVanillaSlotDef* cl_vanilla_slot_get(int i) { return &s_vanillaSlots[i].def; }
 u8 cl_vanilla_slot_row(int i) { return s_vanillaSlots[i].row; }
