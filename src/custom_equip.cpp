@@ -285,8 +285,50 @@ static void* get_arc_res(JKRArchive* arc, const char* name, u16 fallbackId = 0xF
 
 static J3DModel* load_single_bmd(void* bmd, u32 diffFlags = 0x11000084) {
     if (!bmd) return nullptr;
+    // Parse + build on the ROOT heap. This runs while the collection menu is
+    // open, and the current heap there belongs to the menu session: J3DModelData,
+    // its per-texture TGXTexObj arrays (J3DTexture allocates them in its ctor)
+    // and the J3DMaterialAnm instances below must outlive the menu - structures
+    // left on a menu heap are freed when it closes, and the equipped sword then
+    // renders with dangling texture memory (the GPU worker faults in
+    // hash_texture_source while resolving the draw - crash on custom sword
+    // selection).
+    JKRHeap* rootHeap = JKRHeap::getRootHeap();
+    JKRHeap* old = (rootHeap != nullptr) ? mDoExt_setCurrentHeap(rootHeap) : nullptr;
+
     J3DModelData* data = J3DModelLoaderDataBase::load(bmd, 0x59020010);
-    if (!data || data->getMaterialNum() == 0) return nullptr;
+    if (!data || data->getMaterialNum() == 0) {
+        if (old != nullptr) mDoExt_setCurrentHeap(old);
+        return nullptr;
+    }
+
+    // Some custom BMDs carry TEX1 entries the host's strict static-texture
+    // resolution cannot handle (0x0 size, no image data, or a GX format outside
+    // its supported set - e.g. the Gilded Sword). Vanilla never samples those,
+    // but resolving them when the sword renders fatals with "invalid texture
+    // source for content hash". Degenerate-but-supported entries get their
+    // ResTIMG patched to a minimal valid 8x8 (in our own resource buffer, so it
+    // is writable); entries with a format outside the host's supported set get
+    // the format rewritten to GX_TF_IA8 (same 32-byte-per-4x4 block size as most
+    // GX tile formats, so the decode stays in bounds - the pixels of such an
+    // entry were never meaningful anyway).
+    if (J3DTexture* tex = data->getTexture()) {
+        const u16 texNum = tex->getNum();
+        for (u16 i = 0; i < texNum; ++i) {
+            ResTIMG* t = tex->getResTIMG(i);
+            if (t == nullptr) continue;
+            const bool degenerate = t->width == 0 || t->height == 0;
+            const bool unsupported = !(t->format <= 6 || t->format == 14 ||
+                                       (t->format >= 0x41 && t->format <= 0x4E));
+            if (t->width == 0) t->width = 8;
+            if (t->height == 0) t->height = 8;
+            if (t->imageOffset == 0) t->imageOffset = 0x20;
+            if (unsupported) t->format = 3;  // GX_TF_IA8
+            if (degenerate || unsupported) {
+                tex->setResTIMG(i, *t);
+            }
+        }
+    }
 
     for (u16 i = 0; i < data->getMaterialNum(); i++) {
         J3DMaterial* mat = data->getMaterialNodePointer(i);
@@ -301,7 +343,9 @@ static J3DModel* load_single_bmd(void* bmd, u32 diffFlags = 0x11000084) {
         data->makeSharedDL();
     }
 
-    return mDoExt_J3DModel__create(data, 0x80000, diffFlags);
+    J3DModel* model = mDoExt_J3DModel__create(data, 0x80000, diffFlags);
+    if (old != nullptr) mDoExt_setCurrentHeap(old);
+    return model;
 }
 
 static void note_load_fail(Entry& e) {
@@ -1704,9 +1748,19 @@ void custom_equip_shutdown() {
     const ResourceService* res = cl_get_resource_service();
     for (int i = 0; i < kMaxDefs; i++) {
         Entry& e = s_entries[i];
+        // NOTE: sword/shield/sheath models are NOT assigned to the actor (they
+        // are drawn via the shadow/draw hooks reading s_entries), but the BMD
+        // they were parsed from lives in e.arcBuf - so an entry whose models
+        // could still be referenced by an in-flight hook or shadow drawlist must
+        // keep the archive + buffer alive. Checking only the tunic slots here
+        // freed the sword archive out from under a still-equipped entry once the
+        // host started reclaiming unfreed resource buffers at detach.
         bool inUse = pl != nullptr &&
-            ((e.model     != nullptr && pl->mpLinkModel     == e.model) ||
-             (e.hatModel  != nullptr && pl->mpLinkHatModel  == e.hatModel) ||
+            ((e.model     != nullptr && (pl->mpLinkModel == e.model ||
+                                         pl->mSwordModel == e.model ||
+                                         pl->mSheathModel == e.model ||
+                                         pl->mShieldModel == e.model)) ||
+             (e.hatModel  != nullptr && pl->mpLinkHatModel == e.hatModel) ||
              (e.faceModel != nullptr && pl->mpLinkFaceModel == e.faceModel) ||
              (e.handModel != nullptr && pl->mpLinkHandModel == e.handModel));
         if (res != nullptr && g_modCtx != nullptr) {
